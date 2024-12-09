@@ -62,7 +62,7 @@ anyhow = { workspace = true }
 which = { workspace = true }
 aya-build = { workspace = true }
 tonic-build = "0.12"
-#lueur-ebpf-programs = { path = "../lueur-ebpf-programs" }
+lueur-ebpf-programs = { path = "../lueur-ebpf-programs" }
 
 [[bin]]
 name = "lueur"
