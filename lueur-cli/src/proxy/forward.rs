@@ -99,6 +99,7 @@ impl Forward {
 
         let client = client_builder.build().unwrap();
 
+        tracing::info!("UPSTREAM: {}", upstream);
         // Build the Reqwest request builder
         let req_builder = client
             .request(method.clone(), upstream)

@@ -51,10 +51,10 @@ pub struct Cli {
 
     /// gRPC plugin addresses to apply (can specify multiple)
     #[arg(
+        short,
         long = "grpc-plugin",
         help = "gRPC plugin addresses to apply (can specify multiple).",
-        value_parser,
-        num_args = 0..,
+        value_parser
     )]
     pub grpc_plugins: Vec<String>,
 

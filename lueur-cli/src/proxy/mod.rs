@@ -44,9 +44,12 @@ impl ProxyState {
     }
 
     /// Update the plugins
-    pub async fn update_plugins(&self, new_plugins: Vec<Arc<dyn ProxyPlugin>>) {
+    pub async fn update_plugins(
+        &self,
+        mut new_plugins: Vec<Arc<dyn ProxyPlugin>>,
+    ) {
         let mut plugins = self.plugins.write().await;
-        *plugins = new_plugins;
+        plugins.append(&mut new_plugins);
     }
 
     /// Update the shared configuration.
@@ -57,6 +60,7 @@ impl ProxyState {
 
     /// Update the upstream hosts.
     pub async fn update_upstream_hosts(&self, new_hosts: Vec<String>) {
+        tracing::info!("Allowed hosts {:?}", new_hosts);
         let mut hosts = self.upstream_hosts.write().await;
         *hosts = new_hosts;
     }
@@ -81,7 +85,6 @@ pub async fn run_proxy(
         let state = state.clone();
         let req = req.map(Body::new);
         async move {
-            tracing::debug!("Request {:?}", req);
             let state = state.clone();
             let method = req.method().clone();
             let scheme = req.uri().scheme_str().unwrap_or("http").to_string();
@@ -93,10 +96,16 @@ pub async fn run_proxy(
                 .map(|v| v.to_str().ok().map(|s| s.to_string()))
                 .flatten();
 
+            let path = match req.uri().path_and_query() {
+                Some(path) => path.to_string(),
+                None => "/".to_string(),
+            };
+
             let upstream = match determine_upstream(
                 scheme,
                 authority,
                 host_header,
+                path,
                 state.stealth,
             )
             .await
@@ -108,14 +117,14 @@ pub async fn run_proxy(
                 }
             };
 
-            tracing::info!("Upstream URL: {}", upstream);
-
-            let mut passthrough = false;
+            let mut passthrough = true;
 
             // Check if host is in the allowed list
             let hosts = state.upstream_hosts.read().await;
             let upstream_host = get_host(&upstream);
-            if !hosts.contains(&upstream_host) {
+            tracing::debug!("Upstream host: {}", upstream_host);
+            if hosts.contains(&upstream_host) {
+                tracing::debug!("Upstream host in allowed list");
                 passthrough = false;
             }
 
@@ -139,6 +148,7 @@ pub async fn run_proxy(
                     passthrough,
                 )
                 .await;
+                // replace with a match
                 let resp = r.unwrap();
                 Ok(hyper::Response::from(resp))
             }
@@ -220,16 +230,17 @@ async fn determine_upstream(
     scheme: String,
     authority: Option<String>,
     host_header: Option<String>,
+    path: String,
     stealth: bool,
 ) -> Result<String, ProxyError> {
     let upstream = if let Some(auth) = authority {
-        format!("{}://{}", scheme, auth)
+        format!("{}://{}{}", scheme, auth, path)
     } else if let Some(host_str) = host_header {
         let (mut host, port) = parse_domain_with_scheme("http", &host_str);
         if stealth && host.as_str() == "localhost" {
             host = map_localhost_to_nic()
         }
-        format!("http://{}:{}", host, port)
+        format!("http://{}:{}{}", host, port, path)
     } else {
         return Err(ProxyError::InvalidRequest(
             "Unable to determine upstream target".into(),

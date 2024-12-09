@@ -41,6 +41,9 @@ pub enum ProxyError {
 
     #[error("Internal error: {0}")]
     Internal(String),
+
+    #[error("Fault triggered error: {0} {0}")]
+    FaultTriggeredError(u16, String),
 }
 
 impl IntoResponse for ProxyError {
@@ -95,6 +98,9 @@ impl IntoResponse for ProxyError {
                 StatusCode::INTERNAL_SERVER_ERROR,
                 json!({ "error": format!("Internal Server Error: {}", msg) }),
             ),
+            ProxyError::FaultTriggeredError(status, msg) => {
+                (StatusCode::from_u16(status).unwrap(), json!({ "error": msg }))
+            }
         };
 
         // Convert the JSON error message and status code into a response

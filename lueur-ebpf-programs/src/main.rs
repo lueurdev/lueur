@@ -295,13 +295,16 @@ fn try_ingress(mut ctx: TcContext) -> Result<i32, ()> {
         {
             return Ok(TC_ACT_SHOT);
         }
-        info!(&ctx, "INGRESS PORT MODIFIED from {} to {}",
-         u16::from_be(dst_port), u16::from_be(proxy_port));
+        info!(
+            &ctx,
+            "INGRESS PORT MODIFIED from {} to {}",
+            u16::from_be(dst_port),
+            u16::from_be(proxy_port)
+        );
     }
 
     Ok(TC_ACT_OK)
 }
-
 
 pub fn try_egress(mut ctx: TcContext) -> Result<i32, ()> {
     let ethhdr: EthHdr = ctx.load(0).map_err(|_| ())?;

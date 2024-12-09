@@ -27,6 +27,7 @@ use cli::Spinner;
 use config::ProxyConfig;
 use errors::ProxyError;
 use logging::init_logging;
+use plugin::rpc::load_remote_plugins;
 use proxy::ProxyState;
 use proxy::run_proxy;
 use tokio::sync::broadcast;
@@ -55,8 +56,6 @@ async fn main() -> Result<()> {
 
     let proxy_address = cli.proxy_address.clone();
     let upstream_hosts = cli.upstream_hosts.clone();
-
-    state.update_upstream_hosts(upstream_hosts.clone()).await;
 
     let proxy_state = state.clone();
 
@@ -106,7 +105,12 @@ async fn main() -> Result<()> {
         false => None,
     };
 
+    state.update_upstream_hosts(upstream_hosts.clone()).await;
+
     tracing::info!("Proxy server is running at {}", proxy_address);
+
+    let rpc_plugin = load_remote_plugins(cli.grpc_plugins.clone()).await;
+    state.update_plugins(vec![rpc_plugin]).await;
 
     match cli.command {
         Commands::Run(run_cmd) => {
