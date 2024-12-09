@@ -33,10 +33,6 @@ jobs:
       - name: Check
         run: cargo check
         working-directory: ./lueur-cli
-      
-      - name: Build
-        run: cargo build --verbose
-        working-directory: ./lueur-ebpf-programs
 
       - name: Build
         run: cargo build --verbose
