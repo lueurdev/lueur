@@ -22,6 +22,11 @@ network-types = "0.0.7"
 [build-dependencies]
 which = { workspace = true }
 
+[build]
+rustflags = [
+    "-Z", "build-std=core"
+]
+
 [[bin]]
 name = "lueur-ebpf"
 path = "src/main.rs"
