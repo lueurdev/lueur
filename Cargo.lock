@@ -1714,6 +1714,7 @@ dependencies = [
  "indicatif",
  "libc",
  "local-ip-address",
+ "lueur-ebpf-programs",
  "nix",
  "once_cell",
  "oneshot",
