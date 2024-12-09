@@ -26,6 +26,9 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
+      - name: Install bpf-linker
+        run: cargo install bpf-linker
+
       - name: Check
         run: cargo check
       
