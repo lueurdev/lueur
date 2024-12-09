@@ -62,6 +62,7 @@ get_if_addrs = "0.5.3"
 [build-dependencies]
 which = { workspace = true }
 cargo_metadata = { workspace = true }
+aya-build = { workspace = true }
 tonic-build = "0.12"
 lueur-ebpf-programs = { path = "../lueur-ebpf-programs" }
 

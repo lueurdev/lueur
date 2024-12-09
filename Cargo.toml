@@ -11,4 +11,9 @@ panic = "abort"
 
 [workspace.dependencies]
 cargo_metadata = "0.19.0"
+aya-build = "0.1.2"
 which = { version = "7.0.0", default-features = false }
+
+[profile.release.package.lueur-ebpf-programs]
+debug = 2
+codegen-units = 1
