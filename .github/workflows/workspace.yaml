@@ -1,6 +1,13 @@
 name: workspaces
 
-on: [push, pull_request]
+on: 
+  push:
+    branches:
+      - main
+    paths-ignore: 
+      - 'mkdocs.yml'
+      - 'docs/**'
+      - '.github/workflows/docs.yaml'
 
 jobs:
   workspaces:
