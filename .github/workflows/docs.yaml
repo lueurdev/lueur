@@ -28,6 +28,8 @@ jobs:
         with:
           python-version: 3.12
           cache: true
+          cache-dependency-path: |
+            ./pdm.lock
 
       - run: echo "cache_id=$(date --utc '+%V')" >> $GITHUB_ENV 
 
@@ -40,5 +42,6 @@ jobs:
   
       - name: Install dependendencies
         run: pdm install --no-self
-
-      - run: mkdocs gh-deploy --force
+        
+      - name: Build and deploy Documentation
+        run: pdm run deploy-docs
