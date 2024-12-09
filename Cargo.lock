@@ -1704,7 +1704,6 @@ dependencies = [
  "aya-log",
  "aya-log-ebpf",
  "bytes",
- "cargo_metadata",
  "chrono",
  "clap",
  "futures",
