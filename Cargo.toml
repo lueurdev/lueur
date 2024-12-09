@@ -8,6 +8,12 @@ aya-build = "0.1.2"
 which = { version = "7.0.0", default-features = false }
 anyhow = { version = "1", default-features = false }
 
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
+
 [profile.release.package.lueur-ebpf-programs]
 debug = 2
 codegen-units = 1
