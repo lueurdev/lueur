@@ -21,10 +21,6 @@ jobs:
       - run: rustup toolchain install nightly --profile minimal --no-self-update
 
       - uses: actions/cache@v2
-        with:
-          path: |
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Install gRPC build dependencies
         run: |

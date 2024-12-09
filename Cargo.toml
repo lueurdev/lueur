@@ -3,12 +3,6 @@ resolver = "2"
 members = ["lueur-cli", "lueur-ebpf-programs"]
 default-members = ["lueur-cli"]
 
-[profile.dev]
-panic = "abort"
-
-[profile.release]
-panic = "abort"
-
 [workspace.dependencies]
 cargo_metadata = "0.19.0"
 aya-build = "0.1.2"
