@@ -350,9 +350,9 @@ pub fn try_egress(mut ctx: TcContext) -> Result<i32, ()> {
     }
 
     let source_addr = u32::from_be(src_addr);
-    let dest_addr = u32::from_be(dst_addr);
-    let source_port = u16::from_be(src_port);
-    let dest_port = u16::from_be(dst_port);
+    //let dest_addr = u32::from_be(dst_addr);
+    //let source_port = u16::from_be(src_port);
+    //let dest_port = u16::from_be(dst_port);
 
     let proxy_config = lookup_proxy_config(&ctx)?;
     let proxy_port = proxy_config.proxy_port;
