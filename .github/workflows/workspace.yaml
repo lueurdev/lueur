@@ -26,11 +26,13 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
+      - name: Install gRPC build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt install -y protobuf-compiler
+
       - name: Install bpf-linker
         run: cargo install bpf-linker
-
-      - name: Install gRPC build dependencies
-        run: apt install -y protobuf-compiler
 
       - name: Check
         run: cargo check
