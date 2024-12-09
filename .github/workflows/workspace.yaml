@@ -30,8 +30,5 @@ jobs:
       - name: Install bpf-linker
         run: cargo install bpf-linker --git https://github.com/aya-rs/bpf-linker.git
 
-      - name: Check
-        run: cargo check
-      
       - name: Build
         run: cargo build --verbose --all
