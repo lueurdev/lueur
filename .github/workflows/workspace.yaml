@@ -20,7 +20,7 @@ jobs:
 
       - run: rustup toolchain install nightly --profile minimal --no-self-update
 
-      - uses: actions/cache@v2
+      - uses: Swatinem/rust-cache@v2
 
       - name: Install gRPC build dependencies
         run: |
