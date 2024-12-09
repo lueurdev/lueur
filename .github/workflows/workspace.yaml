@@ -35,5 +35,9 @@ jobs:
         working-directory: ./lueur-cli
       
       - name: Build
-        run: cargo build --verbose --all
+        run: cargo build --verbose
+        working-directory: ./lueur-ebpf-programs
+
+      - name: Build
+        run: cargo build --verbose
         working-directory: ./lueur-cli
