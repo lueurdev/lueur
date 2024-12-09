@@ -50,8 +50,21 @@ jobs:
         env:
           OUTPUT: CHANGELOG.md
   
+      - run: rustup toolchain install nightly --component rust-src
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install gRPC build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt install -y protobuf-compiler
+
+      - name: Install bpf-linker
+        run: cargo install bpf-linker --git https://github.com/aya-rs/bpf-linker.git
+
       - uses: taiki-e/upload-rust-binary-action@v1
         with:
+          manifest-path: lueur-cli/Cargo.toml
           bin: lueur
           include: LICENSE,README.md,CHANGELOG.md
           leading-dir: true
