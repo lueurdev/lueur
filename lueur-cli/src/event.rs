@@ -381,9 +381,9 @@ impl fmt::Display for FaultEvent {
                 };
                 Ok(())
             }
-            FaultEvent::Bandwidth { bps } => todo!(),
-            FaultEvent::Jitter { amplitude, frequency } => todo!(),
-            FaultEvent::PacketLoss { loss_probability } => todo!(),
+            FaultEvent::Bandwidth { bps: _ } => todo!(),
+            FaultEvent::Jitter { amplitude: _, frequency: _ } => todo!(),
+            FaultEvent::PacketLoss { loss_probability: _ } => todo!(),
         }
     }
 }
@@ -391,11 +391,11 @@ impl fmt::Display for FaultEvent {
 impl FaultEvent {
     pub fn event_type(&self) -> String {
         match self {
-            FaultEvent::Latency { delay } => "latency".to_string(),
-            FaultEvent::Dns { triggered } => "dns".to_string(),
-            FaultEvent::Bandwidth { bps } => "bandwidth".to_string(),
-            FaultEvent::Jitter { amplitude, frequency } => "jitter".to_string(),
-            FaultEvent::PacketLoss { loss_probability } => "packetloss".to_string(),
+            FaultEvent::Latency { delay: _ } => "latency".to_string(),
+            FaultEvent::Dns { triggered: _ } => "dns".to_string(),
+            FaultEvent::Bandwidth { bps: _ } => "bandwidth".to_string(),
+            FaultEvent::Jitter { amplitude: _, frequency: _ } => "jitter".to_string(),
+            FaultEvent::PacketLoss { loss_probability: _ } => "packetloss".to_string(),
         }
     }
 }

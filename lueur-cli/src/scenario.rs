@@ -171,7 +171,7 @@ pub async fn execute_item(
                     match metrics.protocol {
                         Some(ReportItemProtocol::Http {
                             code,
-                            body_length,
+                            body_length: _,
                         }) => {
                             met = match r.status {
                                 Some(v) => {
@@ -256,20 +256,20 @@ pub fn build_item_list(source: ScenarioItem) -> Vec<ScenarioItem> {
                             direction,
                         },
                         FaultConfiguration::PacketLoss {
-                            packet_loss_type,
-                            packet_loss_rate,
-                            direction,
+                            packet_loss_type: _,
+                            packet_loss_rate: _,
+                            direction: _,
                         } => todo!(),
                         FaultConfiguration::Bandwidth {
-                            bandwidth_rate,
-                            direction,
+                            bandwidth_rate: _,
+                            direction: _,
                         } => todo!(),
                         FaultConfiguration::Jitter {
-                            jitter_amplitude,
-                            jitter_frequency,
-                            direction,
+                            jitter_amplitude: _,
+                            jitter_frequency: _,
+                            direction: _,
                         } => todo!(),
-                        FaultConfiguration::Dns { dns_rate, direction } => {
+                        FaultConfiguration::Dns { dns_rate: _, direction: _ } => {
                             todo!()
                         }
                     }
@@ -282,18 +282,12 @@ pub fn build_item_list(source: ScenarioItem) -> Vec<ScenarioItem> {
     items
 }
 
-struct RequestLifecycle {
-    pub done: bool,
-}
-
 pub async fn execute_request(
     call: ScenarioItemCall,
-    expect: Option<ScenarioItemExpectation>,
+    _expect: Option<ScenarioItemExpectation>,
     proxy_address: String,
     event_manager: Arc<ScenarioEventManager>,
 ) -> Result<ReportItemMetrics, ProxyError> {
-    let start_time = Instant::now();
-
     let url = &call.url;
     let event = event_manager.new_event().await.unwrap();
     let _ = event.on_started(url.clone());
@@ -345,7 +339,7 @@ pub async fn execute_request(
 
     let body_bytes = buffer.freeze();
     let body_length = body_bytes.len();
-    let ttfb_duration = match timing_stream.first_byte_time {
+    let _ = match timing_stream.first_byte_time {
         Some(d) => d.duration_since(timing_stream.start),
         None => Duration::new(0, 0),
     };
@@ -619,7 +613,7 @@ pub async fn handle_scenario_events(
                 match scenario_event {
                     Ok(event) => {
                         match event {
-                            ScenarioItemEvent::Started{ id, url } => {
+                            ScenarioItemEvent::Started{ id: _, url } => {
                                 current = Some(ScenarioItemLifecycle::new(url))
                             },
                             ScenarioItemEvent::Terminated { id } => {
@@ -643,36 +637,36 @@ pub async fn handle_scenario_events(
                 match proxy_event {
                     Ok(event) => {
                         match event {
-                            TaskProgressEvent::Started { id, ts, url } => {
+                            TaskProgressEvent::Started { id: _, ts: _, url } => {
                                 if let Some(ref mut item) = current { item.url = url; }
                             }
-                            TaskProgressEvent::WithFault { id, ts, fault } => {
+                            TaskProgressEvent::WithFault { id: _, ts: _, fault } => {
                                 if let Some(ref mut item) = current {
                                     item.fault_declared = Some(fault.clone());
                                 }
                             }
-                            TaskProgressEvent::IpResolved { id, ts, domain, time_taken } => {
+                            TaskProgressEvent::IpResolved { id: _, ts: _, domain, time_taken } => {
                                 if let Some(ref mut item) = current {
                                     item.dns_timing.push(DnsTiming { host: domain, duration: time_taken, resolved: true });
                                 }
                             },
-                            TaskProgressEvent::FaultComputed { id, ts, fault, direction } => {
+                            TaskProgressEvent::FaultComputed { id, ts: _, fault, direction } => {
                                 if let Some(ref mut item) = current {
                                     let mut f = ScenarioItemLifecycleFaults::new(item.url.clone());
                                     f.computed = Some((item.url.clone(), fault.clone(), direction));
                                     item.faults.insert(id, f);
                                 }
                             },
-                            TaskProgressEvent::FaultApplied { id, ts, fault, direction } => {
+                            TaskProgressEvent::FaultApplied { id, ts: _, fault, direction } => {
                                 if let Some(ref mut item) = current {
                                     if let Some(f) = item.faults.get_mut(&id) {
                                         f.applied.push((item.url.clone(), fault.clone(), direction));
                                     }
                                 }
                             },
-                            TaskProgressEvent::ResponseReceived { id, ts, status_code } => {},
-                            TaskProgressEvent::Completed { id, ts, time_taken, from_downstream_length, from_upstream_length } => {},
-                            TaskProgressEvent::Error { id, ts, error } => {},
+                            TaskProgressEvent::ResponseReceived { id: _, ts: _, status_code: _ } => {},
+                            TaskProgressEvent::Completed { id: _, ts: _, time_taken: _, from_downstream_length: _, from_upstream_length: _} => {},
+                            TaskProgressEvent::Error { id: _, ts: _, error: _ } => {},
                         }
                     }
                     Err(broadcast::error::RecvError::Closed) => {
@@ -728,7 +722,7 @@ where
 
 impl ScenarioItemLifecycleFaults {
     pub fn to_report_metrics_faults(&self) -> ReportItemMetricsFaults {
-        let computed = self.computed.as_ref().map(|(url, event, direction)| {
+        let computed = self.computed.as_ref().map(|(_url, event, direction)| {
             ReportItemFault {
                 event: event.clone(),
                 direction: direction.clone(),
@@ -742,7 +736,7 @@ impl ScenarioItemLifecycleFaults {
             Some(
                 self.applied
                     .iter()
-                    .map(|(url, event, direction)| ReportItemEvent {
+                    .map(|(_url, event, direction)| ReportItemEvent {
                         event: event.clone(),
                         direction: direction.clone(),
                     })

@@ -79,7 +79,7 @@ async fn main() -> Result<()> {
 
     match &cli.command {
         Commands::Run { run, common } => {
-            let progress_guard =
+            let _progress_guard =
                 task::spawn(handle_displayable_events(receiver));
 
             let proxy_address = common.proxy_address.clone();
@@ -158,7 +158,7 @@ async fn main() -> Result<()> {
                 let (event_manager, scenario_event_receiver) =
                     ScenarioEventManager::new(100);
 
-                let scenario_event_progress_guard =
+                let _scenario_event_progress_guard =
                     tokio::spawn(handle_scenario_events(
                         scenario_event_receiver,
                         receiver,
@@ -276,7 +276,7 @@ fn map_faults(
 ) -> Vec<ReportItemMetricsFaults> {
     original_faults
         .iter()
-        .map(|(key, value)| value.to_report_metrics_faults())
+        .map(|(_key, value)| value.to_report_metrics_faults())
         .collect()
 }
 

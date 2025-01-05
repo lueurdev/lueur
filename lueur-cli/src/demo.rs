@@ -117,7 +117,7 @@ async fn ping_myself() -> Html<&'static str> {
     let client = builder.build().unwrap();
 
     let start = Instant::now();
-    let body = client
+    let _body = client
         .get("http://localhost:7070/")
         .send()
         .await

@@ -210,7 +210,7 @@ pub fn pretty_report(report: Report) -> Result<String, Box<dyn std::error::Error
         let endpoint = &item.target.address;
         *endpoint_request_counts.entry(endpoint.clone()).or_insert(0) += 1;
         match item.expect.as_ref().unwrap() {
-            ReportItemExpectation::Http { wanted, got } => {
+            ReportItemExpectation::Http { wanted: _, got } => {
                 if got.as_ref().unwrap().decision == ReportItemExpectationDecision::Failure {
                     *endpoint_error_counts.entry(endpoint.clone()).or_insert(0) += 1;
                 }
@@ -219,11 +219,11 @@ pub fn pretty_report(report: Report) -> Result<String, Box<dyn std::error::Error
     }
 
     // Print the Markdown table header.
-    writeln!(text, "# Lueur Resilience Test Report\n");
-    writeln!(text, 
+    let _ = writeln!(text, "# Lueur Resilience Test Report\n");
+    let _ = writeln!(text, 
         "| **Endpoint** | **Total Fault Injected** | **SLO: 99% < 200ms** | **SLO: 95% < 500ms** | **SLO: 90% < 1s** | **SLO: 99% < 1% Error Rate** | **SLO: 95% < 0.5% Error Rate** |"
     );
-    writeln!(text, "|-------------|--------------------------|-----------------------|-----------------------|-----------------------|----------------------------------|-----------------------------------|");
+    let _ = writeln!(text, "|-------------|--------------------------|-----------------------|-----------------------|-----------------------|----------------------------------|-----------------------------------|");
 
     // Iterate over each test item to generate table rows.
     for item in &report.items {
@@ -232,7 +232,7 @@ pub fn pretty_report(report: Report) -> Result<String, Box<dyn std::error::Error
 
         // Evaluate latency-based SLOs.
         let mut slo_results = Vec::new();
-        for &(slo, threshold) in SLO_METRICS {
+        for &(_slo, threshold) in SLO_METRICS {
             let (status, breach_info) = evaluate_latency_slo(item, threshold);
             if let Some(info) = breach_info {
                 slo_results.push(format!("{} {}", status, info));
@@ -244,7 +244,7 @@ pub fn pretty_report(report: Report) -> Result<String, Box<dyn std::error::Error
         // Evaluate error rate-based SLOs.
         let total_requests = *endpoint_request_counts.get(endpoint).unwrap_or(&0);
         let error_requests = *endpoint_error_counts.get(endpoint).unwrap_or(&0);
-        for &(slo, threshold) in ERROR_RATE_SLOS {
+        for &(_slo, threshold) in ERROR_RATE_SLOS {
             let (status, breach_info) =
                 evaluate_error_rate_slo(item, threshold, total_requests, error_requests);
             if let Some(info) = breach_info {
@@ -255,7 +255,7 @@ pub fn pretty_report(report: Report) -> Result<String, Box<dyn std::error::Error
         }
 
         // Print the table row for the current endpoint.
-        writeln!(
+        let _ = writeln!(
             text, 
             "| `{}` | {} | {} | {} | {} | {} | {} |",
             endpoint,
@@ -269,21 +269,21 @@ pub fn pretty_report(report: Report) -> Result<String, Box<dyn std::error::Error
     }
 
     // Generate and print the aggregated summary.
-    writeln!(text, "{}", generate_summary(&report));
+    let _ = writeln!(text, "{}", generate_summary(&report));
 
     // Analyze and display fault types.
-    writeln!(text, "{}", display_fault_analysis(&report));
+    let _ = writeln!(text, "{}", display_fault_analysis(&report));
 
     // Generate and print recommendations based on fault analysis.
-    writeln!(text, "\n## Recommendations");
+    let _ = writeln!(text, "\n## Recommendations");
     let recommendations = generate_fault_recommendations(&report);
-    writeln!(text, "{}", recommendations);
+    let _ = writeln!(text, "{}", recommendations);
 
     Ok(text)
 }
 
 /// Summarizes all faults injected into an endpoint into a single string.
-fn summarize_faults(fault: &FaultConfiguration, faults_applied: &Vec<ReportItemMetricsFaults>) -> String {
+fn summarize_faults(fault: &FaultConfiguration, _faults_applied: &Vec<ReportItemMetricsFaults>) -> String {
     let mut summary = String::new();
 
     summary.push_str(&format!("{}", fault));
@@ -316,7 +316,7 @@ fn evaluate_latency_slo(item: &ReportItemResult, threshold: f64) -> (String, Opt
     match &item.expect {
         Some(expectation) => {
             match expectation {
-                ReportItemExpectation::Http { wanted, got } => {
+                ReportItemExpectation::Http { wanted: _, got } => {
                     match got {
                         Some(result) => {
                             let actual_response_time = result.response_time.unwrap_or(0.0);
@@ -346,7 +346,7 @@ fn evaluate_latency_slo(item: &ReportItemResult, threshold: f64) -> (String, Opt
 
 /// Evaluates error rate-based SLOs and returns the status and breach details.
 fn evaluate_error_rate_slo(
-    item: &ReportItemResult,
+    _item: &ReportItemResult,
     threshold: f64,
     total_requests: usize,
     error_requests: usize,
@@ -401,7 +401,7 @@ fn generate_summary(report: &Report) -> String {
         .iter()
         .filter(|item| 
             match item.expect.as_ref().unwrap() {
-                ReportItemExpectation::Http { wanted, got } => {
+                ReportItemExpectation::Http { wanted: _, got } => {
                     let decision = &got.as_ref().unwrap().decision;
                     decision == &ReportItemExpectationDecision::Failure
                 }
@@ -410,26 +410,26 @@ fn generate_summary(report: &Report) -> String {
 
     let mut summary = String::new();
 
-    writeln!(summary, "\n## Summary");
-    writeln!(
+    let _ = writeln!(summary, "\n## Summary");
+    let _ = writeln!(
         summary, 
         "- **Total Test Cases:** {}",
         total_tests.to_string().cyan().bold()
     );
-    writeln!(
+    let _ = writeln!(
         summary, 
         "- **Failures:** {}",
         total_failures.to_string().red().bold()
     );
 
     if total_failures > 0 {
-        writeln!(
+        let _ = writeln!(
             summary, 
             "- {}: Investigate the failed test cases to enhance your application's resilience.",
             "🔍 Recommendation".yellow().bold()
         );
     } else {
-        writeln!(
+        let _ = writeln!(
             summary, 
             "- {}: Excellent job! All test cases passed successfully.",
             "🌟 Recommendation".green().bold()
@@ -461,9 +461,9 @@ fn display_fault_analysis(report: &Report) -> String {
     let mut text: String = String::new();
 
     let fault_counts = analyze_fault_types(report);
-    writeln!(text, "\n## Fault Type Analysis");
+    let _ = writeln!(text, "\n## Fault Type Analysis");
     for (fault_type, count) in fault_counts {
-        writeln!(
+        let _ = writeln!(
             text,
             "- **{}** occurred {} times.",
             fault_type.capitalize(),

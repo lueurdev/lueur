@@ -1,10 +1,7 @@
-use std::net::IpAddr;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Instant;
 
-use async_std_resolver::config;
-use async_std_resolver::resolver;
 use hickory_resolver::TokioAsyncResolver;
 use hickory_resolver::config::*;
 use local_ip_address::local_ip;
@@ -73,31 +70,6 @@ impl Resolve for TimingResolver {
             Ok(addrs)
         })
     }
-}
-
-pub async fn lookup_host_address(host: &str) -> String {
-    let resolver = resolver(
-        config::ResolverConfig::default(),
-        config::ResolverOpts::default(),
-    )
-    .await;
-
-    let response = resolver.lookup_ip(host).await.unwrap();
-    let filtered = response
-        .into_iter()
-        .filter(|addr| {
-            tracing::debug!("Addr {:?}", addr);
-
-            match addr {
-                IpAddr::V4(ip) => !ip.is_loopback(),
-                IpAddr::V6(ip) => !ip.is_loopback(),
-            }
-        })
-        .collect::<Vec<_>>();
-
-    tracing::debug!("Found addresses {:?}", filtered);
-
-    filtered[0].to_string()
 }
 
 pub fn map_localhost_to_nic() -> String {

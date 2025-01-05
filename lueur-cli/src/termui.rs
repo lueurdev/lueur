@@ -40,7 +40,7 @@ pub async fn handle_displayable_events(
                 match event {
                     Ok(event) => {
                         match event {
-                            TaskProgressEvent::Started { id, ts, url } => {
+                            TaskProgressEvent::Started { id, ts: _, url } => {
                                 let pb = multi.add(ProgressBar::new_spinner());
                                 pb.set_style(style.clone());
                                 pb.enable_steady_tick(Duration::from_millis(80));
@@ -54,8 +54,8 @@ pub async fn handle_displayable_events(
                                     TaskInfo { pb, url, fault: None, status_code: None };
                                 task_map.insert(id, task_info);
                             }
-                            TaskProgressEvent::IpResolved { id, ts, domain, time_taken } => {},
-                            TaskProgressEvent::WithFault { id, ts, fault } => {
+                            TaskProgressEvent::IpResolved { id: _, ts: _, domain: _, time_taken: _ } => {},
+                            TaskProgressEvent::WithFault { id, ts: _, fault } => {
                                 if let Some(task_info) = task_map.get_mut(&id) {
                                     task_info.fault = Some(fault.clone());
 
@@ -67,14 +67,12 @@ pub async fn handle_displayable_events(
                                     task_info.pb.set_message(format!("{} | {} | ...", u, f));
                                 }
                             }
-                            TaskProgressEvent::FaultApplied { id, ts, fault, direction } => {}
-                            TaskProgressEvent::FaultComputed { id, ts, fault, direction } => {}
-                            TaskProgressEvent::ResponseReceived { id, ts, status_code } => {
+                            TaskProgressEvent::FaultApplied { id: _, ts: _, fault: _, direction: _ } => {}
+                            TaskProgressEvent::FaultComputed { id: _, ts: _, fault: _, direction: _ } => {}
+                            TaskProgressEvent::ResponseReceived { id, ts: _, status_code } => {
                                 if let Some(task_info) = task_map.get_mut(&id) {
                                     let c = "Status:".dimmed();
-                                    let mut m = "".clear();
-
-                                    m = if (200..300).contains(&status_code) {
+                                    let m = if (200..300).contains(&status_code) {
                                         status_code.to_string().green()
                                     } else if (400..500).contains(&status_code) {
                                         status_code.to_string().yellow()
@@ -91,7 +89,7 @@ pub async fn handle_displayable_events(
                                     let c = "URL:".dimmed();
                                     let u = format!("{} {}", c, task_info.url.bright_blue());
 
-                                    let c = "Fault:".dimmed();
+                                    let _ = "Fault:".dimmed();
                                     let f = fault_to_string(&task_info.fault);
 
                                     task_info.pb.set_message(format!("{} | {} | {}", u, f, s));
@@ -99,17 +97,16 @@ pub async fn handle_displayable_events(
                             }
                             TaskProgressEvent::Completed {
                                 id,
-                                ts,
+                                ts: _,
                                 time_taken,
                                 from_downstream_length,
                                 from_upstream_length,
                             } => {
                                 if let Some(task_info) = task_map.remove(&id) {
                                     let c = "Status:".dimmed();
-                                    let mut m = "".white();
                                     let status_code = task_info.status_code.unwrap_or(0);
 
-                                    m = if (200..300).contains(&status_code) {
+                                    let m = if (200..300).contains(&status_code) {
                                         status_code.to_string().green()
                                     } else if (400..500).contains(&status_code) {
                                         status_code.to_string().yellow()
@@ -143,13 +140,12 @@ pub async fn handle_displayable_events(
                                     ));
                                 }
                             }
-                            TaskProgressEvent::Error { id, ts, error } => {
+                            TaskProgressEvent::Error { id, ts: _, error } => {
                                 if let Some(task_info) = task_map.remove(&id) {
                                     let c = "Status:".dimmed();
-                                    let mut m = "".white();
                                     let status_code = task_info.status_code.unwrap();
 
-                                    m = if (200..300).contains(&status_code) {
+                                    let m = if (200..300).contains(&status_code) {
                                         status_code.to_string().green()
                                     } else if (400..500).contains(&status_code) {
                                         status_code.to_string().yellow()
@@ -213,9 +209,9 @@ fn fault_to_string(fault: &Option<FaultEvent>) -> String {
                     }
                 )
             }
-            FaultEvent::Bandwidth { bps } => todo!(),
-            FaultEvent::Jitter { amplitude, frequency } => todo!(),
-            FaultEvent::PacketLoss { loss_probability } => todo!(),
+            FaultEvent::Bandwidth { bps: _ } => todo!(),
+            FaultEvent::Jitter { amplitude: _, frequency: _ } => todo!(),
+            FaultEvent::PacketLoss { loss_probability: _ } => todo!(),
         },
         None => "".to_string(),
     }

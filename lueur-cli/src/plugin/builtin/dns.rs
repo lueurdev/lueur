@@ -55,7 +55,7 @@ impl ProxyPlugin for DnsFaultPlugin {
     async fn process_request(
         &self,
         req: ReqwestRequest,
-        event: Box<dyn ProxyTaskEvent>,
+        _event: Box<dyn ProxyTaskEvent>,
     ) -> Result<ReqwestRequest, ProxyError> {
         Ok(req)
     }
@@ -63,7 +63,7 @@ impl ProxyPlugin for DnsFaultPlugin {
     async fn process_response(
         &self,
         resp: http::Response<Vec<u8>>,
-        event: Box<dyn ProxyTaskEvent>,
+        _event: Box<dyn ProxyTaskEvent>,
     ) -> Result<http::Response<Vec<u8>>, ProxyError> {
         Ok(resp)
     }
@@ -71,7 +71,7 @@ impl ProxyPlugin for DnsFaultPlugin {
     async fn process_connect_request(
         &self,
         req: ConnectRequest,
-        event: Box<dyn ProxyTaskEvent>,
+        _event: Box<dyn ProxyTaskEvent>,
     ) -> Result<ConnectRequest, ProxyError> {
         // Implement as needed
         Ok(req)
@@ -80,7 +80,7 @@ impl ProxyPlugin for DnsFaultPlugin {
     async fn process_connect_response(
         &self,
         _success: bool,
-        event: Box<dyn ProxyTaskEvent>,
+        _event: Box<dyn ProxyTaskEvent>,
     ) -> Result<(), ProxyError> {
         // Implement as needed
         Ok(())
