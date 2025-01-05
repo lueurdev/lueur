@@ -2,11 +2,8 @@ use std::fmt;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use axum::body::Body;
-use axum::body::to_bytes;
 use axum::http;
 use reqwest::Request as ReqwestRequest;
-use reqwest::Response as ReqwestResponse;
 use tokio::sync::Mutex;
 use tokio::sync::RwLock;
 use tonic::Request;

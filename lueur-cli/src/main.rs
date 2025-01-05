@@ -191,7 +191,7 @@ async fn main() -> Result<()> {
                             pb.set_message(title.clone());
 
                             let key = title.clone();
-                            let mut msg = format!("{} ", key.clone());
+                            let msg = format!("{} ", key.clone());
 
                             for item in scenario.scenarios.into_iter() {
                                 let items = build_item_list(item);

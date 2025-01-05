@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 use std::fmt;
-use std::ops::Deref;
 use std::path::Path;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -731,7 +730,7 @@ where
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<Option<Self::Item>> {
-        let mut this = self.project();
+        let this = self.project();
         match this.inner.poll_next(cx) {
             Poll::Ready(Some(Ok(bytes))) => {
                 if this.first_byte_time.is_none() {

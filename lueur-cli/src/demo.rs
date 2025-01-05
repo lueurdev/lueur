@@ -1,11 +1,8 @@
 use std::env;
-use std::net::SocketAddr;
-use std::time::Duration;
 use std::time::Instant;
 
 use axum::Router;
 use axum::body::Body;
-use axum::extract::ConnectInfo;
 use axum::extract::Json;
 use axum::extract::Request;
 use axum::middleware;
@@ -137,7 +134,7 @@ async fn ping_myself() -> Html<&'static str> {
 }
 
 async fn ping_remote() -> Json<Pong> {
-    let mut builder = make_builder();
+    let builder = make_builder();
 
     let client = builder.build().unwrap();
 
@@ -157,7 +154,7 @@ async fn ping_remote() -> Json<Pong> {
 }
 
 async fn multi() -> Json<Pong> {
-    let mut builder = make_builder();
+    let builder = make_builder();
 
     let client = builder.build().unwrap();
 

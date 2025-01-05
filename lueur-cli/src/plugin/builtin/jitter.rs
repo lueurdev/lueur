@@ -5,7 +5,6 @@ use std::time::Duration;
 use async_trait::async_trait;
 use axum::http;
 use reqwest::Request as ReqwestRequest;
-use reqwest::Response as ReqwestResponse;
 
 use crate::config::JitterSettings;
 use crate::errors::ProxyError;

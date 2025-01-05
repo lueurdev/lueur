@@ -4,7 +4,6 @@ use axum::async_trait;
 use axum::http;
 use reqwest::ClientBuilder;
 use reqwest::Request as ReqwestRequest;
-use reqwest::Response as ReqwestResponse;
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -12,7 +11,6 @@ use crate::errors::ProxyError;
 use crate::event::ProxyTaskEvent;
 use crate::fault::Bidirectional;
 use crate::types::ConnectRequest;
-use crate::types::Direction;
 
 pub(crate) mod builtin;
 pub(crate) mod rpc;
