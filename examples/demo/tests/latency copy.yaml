@@ -1,0 +1,16 @@
+title: "Increased Latency Again"
+description: "Upstream service responding with a latency of around 300ms should not impact our service response"
+scenarios:
+  - call:
+      method: GET
+      url: http://localhost:7070/
+    context:
+      upstreams:
+        - http://localhost:7070
+      fault:
+        type: latency
+        mean: 300
+        max: 500
+    expect:
+      status: 200
+      response_time_under: 500

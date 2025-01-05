@@ -5,7 +5,7 @@
 groups = ["default"]
 strategy = ["inherit_metadata"]
 lock_version = "4.5.0"
-content_hash = "sha256:5798c284f1e748d18e4bf56481be13a38f1ac95559a092ae7d02010fc409ac57"
+content_hash = "sha256:fe51138fa9d0e2e4f68268dc6a1ea7d29d10dca78a1c88d2b1785d1fb0d1c446"
 
 [[metadata.targets]]
 requires_python = "==3.12.*"
@@ -416,6 +416,20 @@ groups = ["default"]
 files = [
     {file = "six-1.17.0-py2.py3-none-any.whl", hash = "sha256:4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274"},
     {file = "six-1.17.0.tar.gz", hash = "sha256:ff70335d468e7eb6ec65b95b99d3a2836546063f63acc5171de367e834932a81"},
+]
+
+[[package]]
+name = "termynal"
+version = "0.12.2"
+requires_python = ">=3.9"
+summary = "A lightweight and modern animated terminal window"
+groups = ["default"]
+dependencies = [
+    "markdown>=3",
+]
+files = [
+    {file = "termynal-0.12.2-py3-none-any.whl", hash = "sha256:62314dac6e77f1b7b64a251c2c90702eb6e6910f72ea9c6e5ef68d715b272709"},
+    {file = "termynal-0.12.2.tar.gz", hash = "sha256:cc2356bbf8650c16abd0558786251fabdde6b25e1125c1f091607ed3e422f7f2"},
 ]
 
 [[package]]

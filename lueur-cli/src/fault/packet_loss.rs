@@ -3,6 +3,7 @@ use std::task::Context;
 use std::task::Poll;
 
 use axum::async_trait;
+use axum::http;
 use rand::Rng;
 use rand::SeedableRng;
 use rand::rngs::SmallRng;
@@ -12,6 +13,8 @@ use tokio::io::ReadBuf;
 
 use super::Bidirectional;
 use super::FaultInjector;
+use crate::event::ProxyTaskEvent;
+use crate::types::Direction;
 
 /// Enumeration of packet loss strategies.
 #[derive(Debug, Clone)]
@@ -64,20 +67,24 @@ impl FaultInjector for PacketLossInjector {
     fn inject(
         &self,
         stream: Box<dyn Bidirectional + 'static>,
+        direction: &Direction,
+        event: Box<dyn ProxyTaskEvent>,
     ) -> Box<dyn Bidirectional + 'static> {
-        Box::new(PacketLossStream::new(stream, self.clone()))
+        Box::new(PacketLossStream::new(stream, self.clone(), direction))
     }
 
     async fn apply_on_response(
         &self,
-        resp: reqwest::Response,
-    ) -> Result<reqwest::Response, crate::errors::ProxyError> {
+        resp: http::Response<Vec<u8>>,
+        event: Box<dyn ProxyTaskEvent>,
+    ) -> Result<http::Response<Vec<u8>>, crate::errors::ProxyError> {
         Ok(resp)
     }
 
     async fn apply_on_request_builder(
         &self,
         builder: reqwest::ClientBuilder,
+        event: Box<dyn ProxyTaskEvent>,
     ) -> Result<reqwest::ClientBuilder, crate::errors::ProxyError> {
         Ok(builder)
     }
@@ -85,6 +92,7 @@ impl FaultInjector for PacketLossInjector {
     async fn apply_on_request(
         &self,
         request: reqwest::Request,
+        event: Box<dyn ProxyTaskEvent>,
     ) -> Result<reqwest::Request, crate::errors::ProxyError> {
         Ok(request)
     }
@@ -95,6 +103,7 @@ pub struct PacketLossStream {
     stream: Box<dyn Bidirectional + 'static>,
     injector: PacketLossInjector,
     rng: SmallRng,
+    direction: Direction,
 }
 
 impl PacketLossStream {
@@ -102,8 +111,14 @@ impl PacketLossStream {
     fn new(
         stream: Box<dyn Bidirectional + 'static>,
         injector: PacketLossInjector,
+        direction: &Direction,
     ) -> Self {
-        Self { stream, injector, rng: SmallRng::from_entropy() }
+        Self {
+            stream,
+            injector,
+            rng: SmallRng::from_entropy(),
+            direction: direction.clone(),
+        }
     }
 
     /// Determines whether to drop the current packet.
@@ -118,7 +133,7 @@ impl AsyncRead for PacketLossStream {
         cx: &mut Context<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<std::io::Result<()>> {
-        if self.should_drop() {
+        if self.direction.is_ingress() && self.should_drop() {
             // Simulate packet loss by not reading any data.
             // Alternatively, you could fill the buffer with zeros or keep it
             // pending. Here, we'll skip reading and return
@@ -136,7 +151,7 @@ impl AsyncWrite for PacketLossStream {
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<std::io::Result<usize>> {
-        if self.should_drop() {
+        if self.direction.is_egress() && self.should_drop() {
             // Simulate packet loss by not writing the data.
             // Return as if all bytes were written successfully.
             Poll::Ready(Ok(buf.len()))

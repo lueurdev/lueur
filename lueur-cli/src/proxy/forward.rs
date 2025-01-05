@@ -6,12 +6,17 @@ use axum::http::HeaderMap as AxumHeaderMap;
 use axum::http::Request as AxumRequest;
 use axum::http::Response as AxumResponse;
 use reqwest::header::HeaderMap as ReqwestHeaderMap;
+use tokio::sync::Mutex;
+use tokio::time::Instant;
 use tracing::error;
 use tracing::info;
 use url::Url;
 
 use super::ProxyState;
 use crate::errors::ProxyError;
+use crate::event::ProxyTaskEvent;
+use crate::reporting::DnsTiming;
+use crate::resolver::TimingResolver;
 
 /// Converts Axum's HeaderMap to Reqwest's HeaderMap.
 fn convert_headers_to_reqwest(
@@ -41,9 +46,10 @@ pub async fn handle_request(
     state: Arc<ProxyState>,
     upstream: Url,
     passthrough: bool,
+    event: Box<dyn ProxyTaskEvent>,
 ) -> Result<AxumResponse<Body>, ProxyError> {
     let forward = Forward::new(state.clone());
-    forward.execute(req, upstream, passthrough).await
+    forward.execute(req, upstream, passthrough, event).await
 }
 
 /// Struct responsible for forwarding requests.
@@ -68,7 +74,11 @@ impl Forward {
         request: AxumRequest<Body>,
         upstream: Url,
         passthrough: bool,
+        event: Box<dyn ProxyTaskEvent>,
     ) -> Result<AxumResponse<Body>, ProxyError> {
+        let start = Instant::now();
+        let _ = event.on_started(upstream.to_string());
+
         let method = request.method().clone();
         let headers = request.headers().clone();
 
@@ -85,21 +95,28 @@ impl Forward {
                 ))
             })?;
 
+        let request_bytes = body_bytes.len();
+
         let mut client_builder = reqwest::Client::builder();
+
+        let dns_timing = Arc::new(Mutex::new(DnsTiming::new()));
+        let resolver =
+            Arc::new(TimingResolver::new(dns_timing.clone(), event.clone()));
+        client_builder = client_builder.dns_resolver(resolver);
 
         if !passthrough {
             {
                 let plugins_lock = plugins.read().await;
                 for plugin in plugins_lock.iter() {
-                    client_builder =
-                        plugin.prepare_client(client_builder).await?;
+                    client_builder = plugin
+                        .prepare_client(client_builder, event.clone())
+                        .await?;
                 }
             }
         }
 
         let client = client_builder.build().unwrap();
 
-        tracing::info!("UPSTREAM: {}", upstream);
         // Build the Reqwest request builder
         let req_builder = client
             .request(method.clone(), upstream)
@@ -118,7 +135,7 @@ impl Forward {
                 let plugins_lock = plugins.read().await;
                 for plugin in plugins_lock.iter() {
                     upstream_req = plugin
-                        .process_request(upstream_req)
+                        .process_request(upstream_req, event.clone())
                         .await
                         .map_err(|e| {
                             error!("Plugin processing request failed: {}", e);
@@ -133,6 +150,13 @@ impl Forward {
         let response = match client.execute(upstream_req).await {
             Ok(resp) => resp,
             Err(e) => {
+                let _ = event.on_response(500);
+
+                let _ = event.on_completed(
+                    start.elapsed(),
+                    request_bytes as u64,
+                    0,
+                );
                 error!("Failed to execute reqwest request: {}", e);
                 return Err(ProxyError::Internal(format!(
                     "Failed to execute reqwest request: {}",
@@ -143,23 +167,12 @@ impl Forward {
 
         info!("Received response with status: {}", response.status());
 
-        let mut modified_response = response;
-
-        if !passthrough {
-            modified_response = {
-                let plugins_lock = plugins.read().await;
-                let mut resp = modified_response;
-                for plugin in plugins_lock.iter() {
-                    resp = plugin.process_response(resp).await?;
-                }
-                resp
-            };
-        }
+        let _ = event.on_response(response.status().as_u16());
 
         // Extract the response status, headers, and body
-        let status = modified_response.status();
-        let resp_headers = modified_response.headers().clone();
-        let resp_body_bytes = modified_response.bytes().await.map_err(|e| {
+        let status = response.status();
+        let resp_headers = response.headers().clone();
+        let resp_body_bytes = response.bytes().await.map_err(|e| {
             error!("Failed to read response body: {}", e);
             ProxyError::Internal(format!("Failed to read response body: {}", e))
         })?;
@@ -171,13 +184,33 @@ impl Forward {
         parts.status = status;
         parts.headers = convert_headers_to_axum(&resp_headers);
 
-        let axum_response = AxumResponse::from_parts(
-            parts,
-            Body::from(resp_body_bytes.to_vec()),
-        );
+        let mut axum_response =
+            AxumResponse::from_parts(parts, resp_body_bytes.to_vec());
+
+        if !passthrough {
+            axum_response = {
+                let plugins_lock = plugins.read().await;
+                let mut resp = axum_response;
+                for plugin in plugins_lock.iter() {
+                    tracing::info!("Plugin: {}", plugin);
+                    resp = plugin.process_response(resp, event.clone()).await?;
+                }
+                resp
+            };
+        }
 
         info!("Successfully forwarded response with status: {}", status);
 
+        let (new_parts, new_body) = axum_response.into_parts();
+        let response_bytes = new_body.len();
+        let axum_response =
+            AxumResponse::from_parts(new_parts, Body::from(new_body));
+
+        let _ = event.on_completed(
+            start.elapsed(),
+            request_bytes as u64,
+            response_bytes as u64,
+        );
         Ok(axum_response)
     }
 }

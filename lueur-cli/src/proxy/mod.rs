@@ -7,6 +7,7 @@ use std::sync::Arc;
 use ::oneshot::Sender;
 use axum::body::Body;
 use axum::http::Request;
+use axum::response::IntoResponse;
 use hyper::Method;
 use hyper::body::Incoming;
 use hyper::server::conn::http1;
@@ -20,12 +21,13 @@ use url::Url;
 
 use crate::config::ProxyConfig;
 use crate::errors::ProxyError;
+use crate::event::TaskManager;
 use crate::plugin::ProxyPlugin;
 use crate::plugin::builtin::load_builtin_plugins;
 use crate::resolver::map_localhost_to_nic;
 
 /// Shared application state
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct ProxyState {
     pub plugins: Arc<RwLock<Vec<Arc<dyn ProxyPlugin>>>>,
     pub shared_config: Arc<RwLock<ProxyConfig>>,
@@ -49,11 +51,13 @@ impl ProxyState {
         mut new_plugins: Vec<Arc<dyn ProxyPlugin>>,
     ) {
         let mut plugins = self.plugins.write().await;
+        plugins.clear();
         plugins.append(&mut new_plugins);
     }
 
     /// Update the shared configuration.
     pub async fn update_config(&self, new_config: ProxyConfig) {
+        tracing::debug!("Applying proxy configuration: {:?}", new_config);
         let mut config = self.shared_config.write().await;
         *config = new_config;
     }
@@ -72,6 +76,7 @@ pub async fn run_proxy(
     mut shutdown_rx: broadcast::Receiver<()>,
     readiness_tx: Sender<()>,
     mut config_rx: watch::Receiver<ProxyConfig>,
+    task_manager: Arc<TaskManager>,
 ) -> Result<(), ProxyError> {
     let addr: SocketAddr = proxy_address.parse().map_err(|e| {
         ProxyError::Internal(format!(
@@ -84,6 +89,8 @@ pub async fn run_proxy(
     let tower_service = service_fn(move |req: Request<Incoming>| {
         let state = state.clone();
         let req = req.map(Body::new);
+        let task_manager = task_manager.clone();
+
         async move {
             let state = state.clone();
             let method = req.method().clone();
@@ -119,37 +126,64 @@ pub async fn run_proxy(
 
             let mut passthrough = true;
 
-            // Check if host is in the allowed list
             let hosts = state.upstream_hosts.read().await;
             let upstream_host = get_host(&upstream);
-            tracing::debug!("Upstream host: {}", upstream_host);
             if hosts.contains(&upstream_host) {
                 tracing::debug!("Upstream host in allowed list");
                 passthrough = false;
+            } else {
+                tracing::debug!("Upstream host will be passthrough");
             }
 
             let upstream_url: Url = upstream.parse().unwrap();
+            let mut event = task_manager
+                .new_passthrough_event(upstream_url.to_string())
+                .await
+                .unwrap();
+
+            if !passthrough {
+                event = task_manager
+                    .new_fault_event(upstream_url.to_string())
+                    .await
+                    .unwrap();
+            }
+
+            tracing::debug!("Upstream {}", upstream_url);
 
             if method == Method::CONNECT {
+                tracing::info!("Processing tunnel request to {}", upstream_url);
                 let r = tunnel::handle_connect(
                     req,
                     state.clone(),
                     upstream_url,
                     passthrough,
+                    event.clone(),
                 )
                 .await;
-                let resp = r.unwrap();
+
+                let resp = match r {
+                    Ok(r) => r,
+                    Err(e) => e.into_response(),
+                };
                 Ok(hyper::Response::from(resp))
             } else {
+                tracing::info!(
+                    "Processing forward request to {}",
+                    upstream_url
+                );
                 let r = forward::handle_request(
                     req,
                     state.clone(),
                     upstream_url,
                     passthrough,
+                    event.clone(),
                 )
                 .await;
-                // replace with a match
-                let resp = r.unwrap();
+
+                let resp = match r {
+                    Ok(r) => r,
+                    Err(e) => e.into_response(),
+                };
                 Ok(hyper::Response::from(resp))
             }
         }
@@ -161,18 +195,26 @@ pub async fn run_proxy(
         });
 
     let state = state_cloned.clone();
-    tokio::spawn(async move {
+    let config_change_handle = tokio::spawn(async move {
         let state = state.clone();
-        while config_rx.changed().await.is_ok() {
-            let new_config = config_rx.borrow().clone();
-            tracing::info!("Received new configuration: {:?}", new_config);
-            state.update_config(new_config).await;
-            let new_plugins = load_builtin_plugins(state.shared_config.clone())
-                .await
-                .unwrap();
-            state.update_plugins(new_plugins).await;
+
+        loop {
+            match config_rx.changed().await {
+                Ok(_) => {
+                    let new_config = config_rx.borrow_and_update().clone();
+                    state.update_config(new_config).await;
+                    let new_plugins =
+                        load_builtin_plugins(state.shared_config.clone())
+                            .await
+                            .unwrap();
+                    state.update_plugins(new_plugins).await;
+                }
+                Err(e) => {
+                    tracing::debug!("Exited proxy config loop: {}", e);
+                    break;
+                }
+            };
         }
-        tracing::info!("Configuration update channel closed.");
     });
 
     let listener = tokio::net::TcpListener::bind(addr).await.map_err(|e| {
@@ -182,46 +224,47 @@ pub async fn run_proxy(
         ))
     })?;
 
-    tracing::info!("Proxy listening on {}", addr.to_string());
+    let _ = readiness_tx.send(()).map_err(|e| {
+        ProxyError::Internal(format!("Failed to send readiness signal: {}", e))
+    });
 
-    tokio::spawn(async move {
-        loop {
-            tokio::select! {
-                accept_result = listener.accept() => {
-                    match accept_result {
-                        Ok((stream, addr)) => {
-                            tracing::info!("Accepted connection from {}", addr);
-                            let io = TokioIo::new(stream);
-                            let hyper_service = hyper_service.clone();
-                            tokio::task::spawn(async move {
-                                if let Err(err) = http1::Builder::new()
-                                    .preserve_header_case(true)
-                                    .title_case_headers(true)
-                                    .serve_connection(io, hyper_service)
-                                    .with_upgrades()
-                                    .await
-                                {
-                                    tracing::error!("Failed to serve connection: {:?}", err);
-                                }
-                            });
-                        }
-                        Err(e) => {
-                            tracing::error!("Failed to accept connection: {}", e);
-                            continue;
-                        }
+    loop {
+        tokio::select! {
+            _ = shutdown_rx.recv() => {
+                tracing::info!("Shutdown signal received. Stopping listener.");
+                config_change_handle.abort();
+                break;
+            },
+            accept_result = listener.accept() => {
+                match accept_result {
+                    Ok((stream, addr)) => {
+                        tracing::debug!("Accepted connection from {}", addr);
+
+                        let io = TokioIo::new(stream);
+                        let hyper_service = hyper_service.clone();
+
+                        tokio::task::spawn(async move {
+                            if let Err(err) = http1::Builder::new()
+                                .preserve_header_case(true)
+                                .title_case_headers(true)
+                                .serve_connection(io, hyper_service)
+                                .with_upgrades()
+                                .await
+                            {
+                                tracing::error!("Failed to serve connection: {:?}", err);
+                            }
+                        });
                     }
-                },
-                _ = shutdown_rx.recv() => {
-                    tracing::info!("Shutdown signal received. Stopping listener.");
-                    break;
+                    Err(e) => {
+                        tracing::error!("Failed to accept connection: {}", e);
+                        continue;
+                    }
                 }
             }
         }
-    });
+    }
 
-    readiness_tx.send(()).map_err(|e| {
-        ProxyError::Internal(format!("Failed to send readiness signal: {}", e))
-    })?;
+    tracing::debug!("Proxy is now finised, bye bye");
 
     Ok(())
 }
@@ -234,13 +277,31 @@ async fn determine_upstream(
     stealth: bool,
 ) -> Result<String, ProxyError> {
     let upstream = if let Some(auth) = authority {
+        let mut scheme = scheme;
+
+        if let Some((_, port_str)) = auth.split_once(':') {
+            scheme = match port_str {
+                "443" => "https".to_string(),
+                _ => "http".to_string(),
+            };
+        };
+
         format!("{}://{}{}", scheme, auth, path)
     } else if let Some(host_str) = host_header {
-        let (mut host, port) = parse_domain_with_scheme("http", &host_str);
+        let mut scheme = scheme;
+        if let Some((_, port_str)) = host_str.split_once(':') {
+            scheme = match port_str {
+                "443" => "https".to_string(),
+                _ => "http".to_string(),
+            };
+        };
+
+        let (mut host, port) =
+            parse_domain_with_scheme(scheme.as_str(), &host_str);
         if stealth && host.as_str() == "localhost" {
             host = map_localhost_to_nic()
         }
-        format!("http://{}:{}{}", host, port, path)
+        format!("{}://{}:{}{}", scheme, host, port, path)
     } else {
         return Err(ProxyError::InvalidRequest(
             "Unable to determine upstream target".into(),

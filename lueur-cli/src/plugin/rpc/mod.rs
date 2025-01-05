@@ -2,6 +2,9 @@ use std::fmt;
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use axum::body::Body;
+use axum::body::to_bytes;
+use axum::http;
 use reqwest::Request as ReqwestRequest;
 use reqwest::Response as ReqwestResponse;
 use tokio::sync::Mutex;
@@ -10,9 +13,11 @@ use tonic::Request;
 use tonic::transport::Channel;
 
 use crate::errors::ProxyError;
+use crate::event::ProxyTaskEvent;
 use crate::fault::Bidirectional;
 use crate::plugin::ProxyPlugin;
 use crate::types::ConnectRequest;
+use crate::types::Direction;
 
 // Include the generated protobuf code.
 pub mod service {
@@ -36,6 +41,7 @@ pub struct RemotePlugin {
     pub url: Option<String>,
     pub platform: Option<String>,
     pub client: Arc<Mutex<PluginServiceClient<Channel>>>,
+    pub direction: Direction,
 }
 
 impl fmt::Display for RemotePlugin {
@@ -48,12 +54,14 @@ impl fmt::Display for RemotePlugin {
              Plugin Version        : {}\n\
              Plugin Author     : {}\n\
              Plugin Url      : {}\n\
-             Plugin Platform: {}",
+             Plugin Platform: {}\n\
+             Plugin Direction: {}",
             self.name,
             self.version,
             self.author.clone().unwrap_or("".to_string()),
             self.url.clone().unwrap_or("".to_string()),
             self.platform.clone().unwrap_or("".to_string()),
+            self.direction
         )
     }
 }
@@ -107,7 +115,6 @@ impl RpcPluginManager {
 
         let client = Arc::new(Mutex::new(client));
 
-        tracing::info!("hello");
         let plugin = RemotePlugin {
             name: info.name,
             version: info.version,
@@ -123,6 +130,7 @@ impl RpcPluginManager {
                 Some(info.platform)
             },
             client,
+            direction: Direction::from_str(&info.direction).unwrap(),
         };
 
         tracing::info!("Loaded gRPC plugin {}", &plugin);
@@ -166,6 +174,10 @@ impl RpcPluginManager {
         // For each plugin, send the current `modified_request` bytes and get
         // back updated bytes.
         for plugin in plugins.iter() {
+            if !plugin.direction.is_ingress() {
+                continue;
+            }
+
             let req =
                 ProcessRequestRequest { request: modified_request.clone() };
 
@@ -206,19 +218,24 @@ impl RpcPluginManager {
     ///   processing.
     pub async fn process_response(
         &self,
-        response: Vec<u8>,
-    ) -> Result<Vec<u8>, ProxyError> {
-        let plugins = self.plugins.read().await;
-        let mut modified_response = response;
+        res: http::Response<Vec<u8>>,
+    ) -> Result<http::Response<Vec<u8>>, ProxyError> {
+        // Extract status, version, and headers
+        let (parts, mut modified_response) = res.into_parts();
 
+        let status: http::StatusCode = parts.status;
+        let version = parts.version;
+        let headers = parts.headers.clone();
+
+        // Acquire the plugin list and run the modifications
+        let plugins = self.plugins.read().await;
         for plugin in plugins.iter() {
             let req =
                 ProcessResponseRequest { response: modified_response.clone() };
 
             let mut client = plugin.client.lock().await;
-
             let response = client
-                .process_response(Request::new(req))
+                .process_response(tonic::Request::new(req))
                 .await
                 .map_err(|e| {
                     ProxyError::RpcCallError(
@@ -231,7 +248,23 @@ impl RpcPluginManager {
             modified_response = resp.modified_response;
         }
 
-        Ok(modified_response)
+        // Build a new http::Response with the modified body
+        let mut builder =
+            http::Response::builder().status(status).version(version);
+
+        for (k, v) in headers.iter() {
+            builder = builder.header(k, v);
+        }
+
+        // forces the proxy to recompute the length
+        let _ =
+            builder.headers_mut().unwrap().remove("content-length").unwrap();
+
+        let http_response = builder.body(modified_response).map_err(|e| {
+            ProxyError::Other(format!("Failed to build http response: {}", e))
+        })?;
+
+        Ok(http_response)
     }
 }
 
@@ -257,6 +290,7 @@ impl ProxyPlugin for RpcPlugin {
     async fn prepare_client(
         &self,
         builder: reqwest::ClientBuilder,
+        event: Box<dyn ProxyTaskEvent>,
     ) -> Result<reqwest::ClientBuilder, ProxyError> {
         Ok(builder)
     }
@@ -264,20 +298,23 @@ impl ProxyPlugin for RpcPlugin {
     async fn process_request(
         &self,
         req: ReqwestRequest,
+        event: Box<dyn ProxyTaskEvent>,
     ) -> Result<ReqwestRequest, ProxyError> {
         self.manager.process_request(req).await
     }
 
     async fn process_response(
         &self,
-        resp: ReqwestResponse,
-    ) -> Result<ReqwestResponse, ProxyError> {
-        Ok(resp)
+        resp: http::Response<Vec<u8>>,
+        event: Box<dyn ProxyTaskEvent>,
+    ) -> Result<http::Response<Vec<u8>>, ProxyError> {
+        self.manager.process_response(resp).await
     }
 
     async fn process_connect_request(
         &self,
         req: ConnectRequest,
+        event: Box<dyn ProxyTaskEvent>,
     ) -> Result<ConnectRequest, ProxyError> {
         // Implement as needed
         Ok(req)
@@ -286,6 +323,7 @@ impl ProxyPlugin for RpcPlugin {
     async fn process_connect_response(
         &self,
         _success: bool,
+        event: Box<dyn ProxyTaskEvent>,
     ) -> Result<(), ProxyError> {
         // Implement as needed
         Ok(())
@@ -295,11 +333,18 @@ impl ProxyPlugin for RpcPlugin {
         &self,
         client_stream: Box<dyn Bidirectional + 'static>,
         server_stream: Box<dyn Bidirectional + 'static>,
+        event: Box<dyn ProxyTaskEvent>,
     ) -> Result<
         (Box<dyn Bidirectional + 'static>, Box<dyn Bidirectional + 'static>),
         ProxyError,
     > {
         Ok((client_stream, server_stream))
+    }
+}
+
+impl fmt::Display for RpcPlugin {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Rpc Plugin")
     }
 }
 

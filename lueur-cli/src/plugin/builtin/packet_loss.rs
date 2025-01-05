@@ -1,11 +1,14 @@
+use std::fmt;
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use axum::http;
 use reqwest::Request as ReqwestRequest;
 use reqwest::Response as ReqwestResponse;
 
 use crate::config::PacketLossSettings;
 use crate::errors::ProxyError;
+use crate::event::ProxyTaskEvent;
 use crate::fault::Bidirectional;
 use crate::fault::FaultInjector;
 use crate::fault::packet_loss::PacketLossInjector;
@@ -13,6 +16,7 @@ use crate::fault::packet_loss::PacketLossOptions;
 use crate::fault::packet_loss::PacketLossStrategy;
 use crate::plugin::ProxyPlugin;
 use crate::types::ConnectRequest;
+use crate::types::Direction;
 use crate::types::PacketLossType;
 
 /// PacketLossFaultPlugin is a plugin that injects packet loss into streams
@@ -20,6 +24,13 @@ use crate::types::PacketLossType;
 #[derive(Debug)]
 pub struct PacketLossFaultPlugin {
     injector: Arc<dyn FaultInjector>,
+    direction: Direction,
+}
+
+impl fmt::Display for PacketLossFaultPlugin {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Packet Loss Plugin")
+    }
 }
 
 impl PacketLossFaultPlugin {
@@ -37,7 +48,7 @@ impl PacketLossFaultPlugin {
             },
         };
         let injector = Arc::new(PacketLossInjector::new(packet_loss_options));
-        Self { injector }
+        Self { injector, direction: settings.direction }
     }
 }
 
@@ -46,6 +57,7 @@ impl ProxyPlugin for PacketLossFaultPlugin {
     async fn prepare_client(
         &self,
         builder: reqwest::ClientBuilder,
+        event: Box<dyn ProxyTaskEvent>,
     ) -> Result<reqwest::ClientBuilder, ProxyError> {
         Ok(builder)
     }
@@ -53,20 +65,23 @@ impl ProxyPlugin for PacketLossFaultPlugin {
     async fn process_request(
         &self,
         req: ReqwestRequest,
+        event: Box<dyn ProxyTaskEvent>,
     ) -> Result<ReqwestRequest, ProxyError> {
         Ok(req)
     }
 
     async fn process_response(
         &self,
-        resp: ReqwestResponse,
-    ) -> Result<ReqwestResponse, ProxyError> {
+        resp: http::Response<Vec<u8>>,
+        event: Box<dyn ProxyTaskEvent>,
+    ) -> Result<http::Response<Vec<u8>>, ProxyError> {
         Ok(resp)
     }
 
     async fn process_connect_request(
         &self,
         req: ConnectRequest,
+        event: Box<dyn ProxyTaskEvent>,
     ) -> Result<ConnectRequest, ProxyError> {
         // Implement as needed
         Ok(req)
@@ -75,6 +90,7 @@ impl ProxyPlugin for PacketLossFaultPlugin {
     async fn process_connect_response(
         &self,
         _success: bool,
+        event: Box<dyn ProxyTaskEvent>,
     ) -> Result<(), ProxyError> {
         // Implement as needed
         Ok(())
@@ -84,12 +100,15 @@ impl ProxyPlugin for PacketLossFaultPlugin {
         &self,
         client_stream: Box<dyn Bidirectional + 'static>,
         server_stream: Box<dyn Bidirectional + 'static>,
+        event: Box<dyn ProxyTaskEvent>,
     ) -> Result<
         (Box<dyn Bidirectional + 'static>, Box<dyn Bidirectional + 'static>),
         ProxyError,
     > {
-        let injected_client = self.injector.inject(client_stream);
-        let injected_server = self.injector.inject(server_stream);
+        let injected_client =
+            self.injector.inject(client_stream, &self.direction, event.clone());
+        let injected_server =
+            self.injector.inject(server_stream, &self.direction, event.clone());
 
         Ok((injected_client, injected_server))
     }

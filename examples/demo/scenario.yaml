@@ -1,0 +1,26 @@
+proxy:
+  address: 127.0.0.1:8080
+plugins: []
+upstream_hosts:
+  - http://localhost:50051
+items:
+  - title: "test"
+    description: "meh"
+    concurrent: false
+    fault:
+        fault_name: Latency
+        latency_distribution: uniform
+        latency_mean: 300.0
+        latency_stddev: 30
+        latency_min: 10
+        latency_max: 50
+        latency_shape: 0
+        latency_scale: 0
+        direction: egress
+    requests:
+      - method: GET
+        url: http://localhost:7070
+        expect:
+          status: 200
+          response_time_under: 200
+

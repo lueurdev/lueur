@@ -3,8 +3,10 @@
 
 mod cli;
 mod config;
+mod demo;
 mod ebpf;
 mod errors;
+mod event;
 mod fault;
 mod logging;
 mod nic;
@@ -13,56 +15,337 @@ mod proxy;
 mod reporting;
 mod resolver;
 mod scenario;
+mod termui;
 mod types;
 
+use std::collections::HashMap;
+use std::path::Path;
 use std::sync::Arc;
+use std::sync::Mutex;
+use std::time::Duration;
 
 use anyhow::Result;
+use aya::Ebpf;
 use clap::Parser;
 use cli::Cli;
 use cli::Commands;
+use cli::DemoCommands;
+use cli::ProxyAwareCommandCommon;
 use cli::RunCommands;
 use cli::ScenarioCommands;
-use cli::Spinner;
+use colored::Colorize;
+use colorful::Color;
+use colorful::Colorful;
 use config::ProxyConfig;
 use errors::ProxyError;
+use event::TaskManager;
+use indicatif::MultiProgress;
+use indicatif::ProgressBar;
+use indicatif::ProgressStyle;
 use logging::init_logging;
+use nic::ProxyEbpfConfig;
 use plugin::rpc::load_remote_plugins;
 use proxy::ProxyState;
 use proxy::run_proxy;
+use reporting::pretty_report;
+use reporting::Report;
+use reporting::ReportItemMetrics;
+use reporting::ReportItemMetricsFaults;
+use reporting::ReportItemResult;
+use scenario::ScenarioEventManager;
+use scenario::ScenarioItemLifecycle;
+use scenario::ScenarioItemLifecycleFaults;
+use scenario::build_item_list;
+use scenario::execute_item;
+use scenario::handle_scenario_events;
+use scenario::load_scenarios;
+use termui::handle_displayable_events;
 use tokio::sync::broadcast;
 use tokio::sync::watch;
-use tracing::debug;
+use tokio::task;
+use tokio_stream::StreamExt;
 use tracing::error;
-
-use crate::scenario::load_scenario_file;
+use url::Url;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    let _log_guard = init_logging(&cli.log_file).unwrap();
+    let _guards = init_logging(cli.log_file, cli.log_stdout, cli.log_level);
 
+    let (shutdown_tx, shutdown_rx) = broadcast::channel::<()>(1); // Capacity of 1
+
+    let (task_manager, receiver) = TaskManager::new(100);
+
+    match &cli.command {
+        Commands::Run { run, common } => {
+            let progress_guard =
+                task::spawn(handle_displayable_events(receiver));
+
+            let proxy_address = common.proxy_address.clone();
+            let proxy_nic_config = nic::determine_proxy_and_ebpf_config(
+                proxy_address,
+                common.iface.clone(),
+            )
+            .unwrap();
+
+            let app_state = initialize_proxy(
+                &common,
+                &proxy_nic_config,
+                shutdown_rx,
+                task_manager.clone(),
+            )
+            .await;
+
+            let cmd_config =
+                get_run_command_proxy_config((*run).clone()).unwrap();
+
+            if app_state.config_tx.send(cmd_config).is_err() {
+                error!("Proxy configuration listener has been shut down.");
+            }
+
+            proxy_prelude(app_state.proxy_address);
+
+            tokio::signal::ctrl_c().await.map_err(|e| {
+                ProxyError::Internal(format!(
+                    "Failed to listen for shutdown signal: {}",
+                    e
+                ))
+            })?;
+
+            tracing::info!("Shutdown signal received. Initiating shutdown.");
+        }
+        Commands::Demo(demo_cmd) => match demo_cmd {
+            DemoCommands::Run(demo_config) => {
+                demo_prelude(format!(
+                    "{}:{}",
+                    demo_config.address, demo_config.port
+                ));
+
+                let _ = demo::run((*demo_config).clone()).await;
+            }
+        },
+        Commands::Scenario { scenario, common } => match scenario {
+            ScenarioCommands::Run(config) => {
+                let proxy_address = common.proxy_address.clone();
+                let proxy_nic_config = nic::determine_proxy_and_ebpf_config(
+                    proxy_address,
+                    common.iface.clone(),
+                )
+                .unwrap();
+
+                let m = MultiProgress::new();
+
+                let app_state = initialize_proxy(
+                    &common,
+                    &proxy_nic_config,
+                    shutdown_rx,
+                    task_manager.clone(),
+                )
+                .await;
+
+                let mut scenarios = load_scenarios(Path::new(&config.scenario));
+
+                println!(
+                    "\n{}\n",
+                    "================ Running Scenarios ================"
+                        .dimmed()
+                );
+
+                let queue =
+                    Arc::new(Mutex::new(Vec::<ScenarioItemLifecycle>::new()));
+
+                let (event_manager, scenario_event_receiver) =
+                    ScenarioEventManager::new(100);
+
+                let scenario_event_progress_guard =
+                    tokio::spawn(handle_scenario_events(
+                        scenario_event_receiver,
+                        receiver,
+                        queue.clone(),
+                    ));
+
+                let mut results = Vec::new();
+
+                while let Some(candidate) = scenarios.next().await {
+                    match candidate {
+                        Ok(scenario) => {
+                            let title = scenario.clone().title;
+
+                            let n = scenario.scenarios.len() as u64;
+
+                            let pb = m.add(ProgressBar::new(n));
+                            pb.enable_steady_tick(Duration::from_millis(80));
+                            pb.set_style(
+                                ProgressStyle::with_template(
+                                    "{spinner:.green} {pos:>2}/{len:2} {msg}",
+                                )
+                                .unwrap()
+                                .tick_strings(
+                                    &[
+                                        "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧",
+                                        "⠇", "⠏",
+                                    ],
+                                ),
+                            );
+                            pb.set_message(title.clone());
+
+                            let key = title.clone();
+                            let mut msg = format!("{} ", key.clone());
+
+                            for item in scenario.scenarios.into_iter() {
+                                let items = build_item_list(item);
+                                pb.set_length(items.len() as u64);
+
+                                for i in items {
+                                    let report = execute_item(
+                                        i,
+                                        app_state.clone(),
+                                        event_manager.clone(),
+                                    )
+                                    .await;
+
+                                    let mut events = queue.lock().unwrap();
+                                    let event = events.pop();
+
+                                    let metrics = match event {
+                                        Some(e) => {
+                                            match report.metrics.clone() {
+                                                Some(m) => {
+                                                    Some(ReportItemMetrics {
+                                                        dns: e.dns_timing,
+                                                        protocol: m.protocol,
+                                                        ttfb: m.ttfb,
+                                                        total_time: m
+                                                            .total_time,
+                                                        faults: map_faults(
+                                                            &e.faults,
+                                                        ),
+                                                    })
+                                                }
+                                                None => None,
+                                            }
+                                        }
+                                        None => None,
+                                    };
+
+                                    results.push(ReportItemResult {
+                                        target: report.target,
+                                        expect: report.expect,
+                                        fault: report.fault,
+                                        metrics,
+                                        errors: report.errors,
+                                        total_time: report.total_time,
+                                    });
+
+                                    pb.inc(1);
+                                    pb.set_message(msg.clone());
+                                }
+                            }
+
+                            pb.finish();
+                        }
+                        Err(e) => error!("Failed to load scenario: {:?}", e),
+                    }
+                }
+
+                let final_report =
+                    Report { plugins: Vec::new(), items: results };
+
+                let _ = final_report.save("report.yaml");
+
+                let text = pretty_report(final_report);
+
+                println!("{}", text.unwrap());
+            }
+        },
+    }
+
+    match shutdown_tx.send(()) {
+        Ok(_) => tracing::debug!("Shutdown notified."),
+        Err(e) => tracing::warn!("Failed to notify shutdown {}", e),
+    }
+
+    drop(task_manager);
+
+    Ok(())
+}
+
+fn map_faults(
+    original_faults: &HashMap<usize, ScenarioItemLifecycleFaults>,
+) -> Vec<ReportItemMetricsFaults> {
+    original_faults
+        .iter()
+        .map(|(key, value)| value.to_report_metrics_faults())
+        .collect()
+}
+
+/// Handles the 'Run' subcommands
+fn get_run_command_proxy_config(
+    run_cmd: RunCommands,
+) -> Result<config::ProxyConfig, ProxyError> {
+    match run_cmd {
+        RunCommands::Dns(run_cmd_dns) => {
+            let direction = run_cmd_dns.common.direction;
+            let config = run_cmd_dns.config;
+            Ok(config::ProxyConfig::new_dns(config, direction).unwrap())
+        }
+        RunCommands::Latency(run_cmd_latency) => {
+            let direction = run_cmd_latency.common.direction;
+            let config = run_cmd_latency.config;
+            Ok(config::ProxyConfig::new_latency(config, direction).unwrap())
+        }
+        RunCommands::PacketLoss(run_cmd_packet_loss) => {
+            let direction = run_cmd_packet_loss.common.direction;
+            let config = run_cmd_packet_loss.config;
+            Ok(config::ProxyConfig::new_packet_loss(config, direction).unwrap())
+        }
+        RunCommands::Bandwidth(run_cmd_bandwidth) => {
+            let direction = run_cmd_bandwidth.common.direction;
+            let config = run_cmd_bandwidth.config;
+            Ok(config::ProxyConfig::new_bandwidth(config, direction).unwrap())
+        }
+        RunCommands::Jitter(run_cmd_jitter) => {
+            let direction = run_cmd_jitter.common.direction;
+            let config = run_cmd_jitter.config;
+            Ok(config::ProxyConfig::new_jitter(config, direction).unwrap())
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct AppState {
+    pub proxy_state: Arc<ProxyState>,
+    pub config_tx: watch::Sender<ProxyConfig>,
+    pub proxy_address: String,
+}
+
+async fn initialize_proxy(
+    cli: &ProxyAwareCommandCommon,
+    proxy_nic_config: &ProxyEbpfConfig,
+    shutdown_rx: broadcast::Receiver<()>,
+    task_manager: Arc<TaskManager>,
+) -> AppState {
     // Initialize shared state with empty configuration
     let state = Arc::new(ProxyState::new(cli.ebpf));
 
     // Create a watch channel for configuration updates
     let (config_tx, config_rx) = watch::channel(ProxyConfig::default());
 
-    let (shutdown_tx, shutdown_rx) = broadcast::channel::<()>(1); // Capacity of 1
-
     // Create a oneshot channel for readiness signaling
     let (readiness_tx, readiness_rx) = oneshot::channel::<()>();
 
-    let proxy_address = cli.proxy_address.clone();
     let upstream_hosts = cli.upstream_hosts.clone();
+    let upstreams: Vec<String> =
+        upstream_hosts.iter().map(|h| upstream_to_addr(h).unwrap()).collect();
 
     let proxy_state = state.clone();
-
-    let proxy_nic_config =
-        nic::determine_proxy_and_ebpf_config(proxy_address, cli.iface).unwrap();
-
     let proxy_address = proxy_nic_config.proxy_address();
+
+    let rpc_plugin = load_remote_plugins(cli.grpc_plugins.clone()).await;
+    state.update_plugins(vec![rpc_plugin]).await;
+
+    state.update_upstream_hosts(upstreams).await;
 
     tokio::spawn(run_proxy(
         proxy_address.clone(),
@@ -70,15 +353,85 @@ async fn main() -> Result<()> {
         shutdown_rx,
         readiness_tx,
         config_rx,
+        task_manager,
     ));
 
     // Wait for the proxy to signal readiness
-    readiness_rx.await.map_err(|e| {
+    let _ = readiness_rx.await.map_err(|e| {
         ProxyError::Internal(format!(
             "Failed to receive readiness signal: {}",
             e
         ))
-    })?;
+    });
+
+    tracing::info!("Proxy server is listening on {}", proxy_address);
+
+    AppState { proxy_address, proxy_state: state, config_tx }
+}
+
+fn upstream_to_addr(
+    host: &String,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let url_str = if host.contains("://") {
+        host.to_string()
+    } else {
+        format!("scheme://{}", host)
+    };
+
+    let url = Url::parse(&url_str)?;
+
+    let host = url.host_str().ok_or("Missing host")?.to_string();
+
+    let port = url.port_or_known_default().unwrap();
+
+    Ok(format!("{}:{}", host, port))
+}
+
+fn proxy_prelude(proxy_address: String) {
+    let g = "lueur".gradient(Color::LightYellow3);
+    let r = "Your Resiliency Exploration Tool".gradient(Color::Purple3);
+    let a = format!("http://{}", proxy_address).cyan();
+    println!(
+        "
+    Welcome to {} — {}!
+
+    To get started, route your HTTP/HTTPS requests through:
+    {}
+
+    As you send requests, lueur will simulate network conditions
+    so you can see how your application copes.
+
+    Ready when you are — go ahead and make some requests!
+        ",
+        g, r, a
+    );
+}
+
+fn demo_prelude(demo_address: String) {
+    let g = "lueur".gradient(Color::Plum4);
+    println!(
+        "
+    Welcome to {}, this demo application is here to let you explore lueur's capabilities.
+
+    Here are a few examples:
+
+    export HTTP_PROXY=http://localhost:8080
+    export HTTPS_PROXY=http://localhost:8080
+
+    curl -x ${{HTTP_PROXY}} http://{demo_address}/
+    curl -x ${{HTTP_PROXY}} http://{demo_address}/ping
+    curl -x ${{HTTP_PROXY}} http://{demo_address}/ping/myself
+    curl -x ${{HTTP_PROXY}} --json '{{\"content\": \"hello\"}}' http://{demo_address}/uppercase
+
+        ", g,
+    );
+}
+
+fn initialize_stealth(
+    cli: &ProxyAwareCommandCommon,
+    proxy_nic_config: ProxyEbpfConfig,
+) -> Option<Ebpf> {
+    let upstream_hosts = cli.upstream_hosts.clone();
 
     #[allow(unused_variables)]
     let ebpf_guard = match cli.ebpf {
@@ -105,87 +458,5 @@ async fn main() -> Result<()> {
         false => None,
     };
 
-    state.update_upstream_hosts(upstream_hosts.clone()).await;
-
-    tracing::info!("Proxy server is running at {}", proxy_address);
-
-    let rpc_plugin = load_remote_plugins(cli.grpc_plugins.clone()).await;
-    state.update_plugins(vec![rpc_plugin]).await;
-
-    match cli.command {
-        Commands::Run(run_cmd) => {
-            let cmd_config = get_run_command_proxy_config(run_cmd).unwrap();
-            if config_tx.send(cmd_config).is_err() {
-                error!("Proxy task has been shut down.");
-            }
-        }
-        Commands::Scenario(scenario_cmd) => match scenario_cmd {
-            ScenarioCommands::Run(config) => {
-                let spinner = Spinner::new("Starting the scenario...");
-
-                match load_scenario_file(config.scenario.as_str()) {
-                    Ok(scenario) => {
-                        match scenario
-                            .execute(Some(&spinner), config_tx.clone())
-                            .await
-                        {
-                            Ok(report) => {
-                                debug!("Scenario executed successfully!");
-
-                                report.save(config.report.as_str())?;
-                            }
-                            Err(e) => {
-                                error!("Failed to execute scenario: {:?}", e);
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        error!("Failed to load scenario: {:?}", e);
-                    }
-                }
-            }
-        },
-    }
-
-    tokio::signal::ctrl_c().await.map_err(|e| {
-        ProxyError::Internal(format!(
-            "Failed to listen for shutdown signal: {}",
-            e
-        ))
-    })?;
-
-    tracing::info!("Shutdown signal received. Initiating shutdown.");
-
-    // Send shutdown signal
-    let _ = shutdown_tx.send(());
-
-    Ok(())
-}
-
-/// Handles the 'Run' subcommands
-fn get_run_command_proxy_config(
-    run_cmd: RunCommands,
-) -> Result<config::ProxyConfig, ProxyError> {
-    match run_cmd {
-        RunCommands::Dns(run_cmd_dns) => {
-            let config = run_cmd_dns.config;
-            Ok(config::ProxyConfig::new_dns(config).unwrap())
-        }
-        RunCommands::Latency(run_cmd_latency) => {
-            let config = run_cmd_latency.config;
-            Ok(config::ProxyConfig::new_latency(config).unwrap())
-        }
-        RunCommands::PacketLoss(run_cmd_packet_loss) => {
-            let config = run_cmd_packet_loss.config;
-            Ok(config::ProxyConfig::new_packet_loss(config).unwrap())
-        }
-        RunCommands::Bandwidth(run_cmd_bandwidth) => {
-            let config = run_cmd_bandwidth.config;
-            Ok(config::ProxyConfig::new_bandwidth(config).unwrap())
-        }
-        RunCommands::Jitter(run_cmd_jitter) => {
-            let config = run_cmd_jitter.config;
-            Ok(config::ProxyConfig::new_jitter(config).unwrap())
-        }
-    }
+    ebpf_guard
 }

@@ -1,12 +1,15 @@
+use std::fmt;
 use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
+use axum::http;
 use reqwest::Request as ReqwestRequest;
 use reqwest::Response as ReqwestResponse;
 
 use crate::config::JitterSettings;
 use crate::errors::ProxyError;
+use crate::event::ProxyTaskEvent;
 use crate::fault::Bidirectional;
 use crate::fault::FaultInjector;
 use crate::fault::jitter::JitterInjector;
@@ -14,12 +17,20 @@ use crate::fault::jitter::JitterOptions;
 use crate::fault::jitter::JitterStrategy;
 use crate::plugin::ProxyPlugin;
 use crate::types::ConnectRequest;
+use crate::types::Direction;
 
 /// JitterFaultPlugin is a plugin that injects jitter into streams using
 /// amplitude and frequency.
 #[derive(Debug)]
 pub struct JitterFaultPlugin {
     injector: Arc<dyn FaultInjector>,
+    direction: Direction,
+}
+
+impl fmt::Display for JitterFaultPlugin {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Jitter Plugin")
+    }
 }
 
 impl JitterFaultPlugin {
@@ -31,7 +42,7 @@ impl JitterFaultPlugin {
             },
         };
         let injector = Arc::new(JitterInjector::new(jitter_options));
-        Self { injector }
+        Self { injector, direction: settings.direction }
     }
 }
 
@@ -40,6 +51,7 @@ impl ProxyPlugin for JitterFaultPlugin {
     async fn prepare_client(
         &self,
         builder: reqwest::ClientBuilder,
+        event: Box<dyn ProxyTaskEvent>,
     ) -> Result<reqwest::ClientBuilder, ProxyError> {
         Ok(builder)
     }
@@ -47,20 +59,23 @@ impl ProxyPlugin for JitterFaultPlugin {
     async fn process_request(
         &self,
         req: ReqwestRequest,
+        event: Box<dyn ProxyTaskEvent>,
     ) -> Result<ReqwestRequest, ProxyError> {
         Ok(req)
     }
 
     async fn process_response(
         &self,
-        resp: ReqwestResponse,
-    ) -> Result<ReqwestResponse, ProxyError> {
+        resp: http::Response<Vec<u8>>,
+        event: Box<dyn ProxyTaskEvent>,
+    ) -> Result<http::Response<Vec<u8>>, ProxyError> {
         Ok(resp)
     }
 
     async fn process_connect_request(
         &self,
         req: ConnectRequest,
+        event: Box<dyn ProxyTaskEvent>,
     ) -> Result<ConnectRequest, ProxyError> {
         // Implement as needed
         Ok(req)
@@ -69,6 +84,7 @@ impl ProxyPlugin for JitterFaultPlugin {
     async fn process_connect_response(
         &self,
         _success: bool,
+        event: Box<dyn ProxyTaskEvent>,
     ) -> Result<(), ProxyError> {
         // Implement as needed
         Ok(())
@@ -78,12 +94,15 @@ impl ProxyPlugin for JitterFaultPlugin {
         &self,
         client_stream: Box<dyn Bidirectional + 'static>,
         server_stream: Box<dyn Bidirectional + 'static>,
+        event: Box<dyn ProxyTaskEvent>,
     ) -> Result<
         (Box<dyn Bidirectional + 'static>, Box<dyn Bidirectional + 'static>),
         ProxyError,
     > {
-        let injected_client = self.injector.inject(client_stream);
-        let injected_server = self.injector.inject(server_stream);
+        let injected_client =
+            self.injector.inject(client_stream, &self.direction, event.clone());
+        let injected_server =
+            self.injector.inject(server_stream, &self.direction, event.clone());
 
         Ok((injected_client, injected_server))
     }

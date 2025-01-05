@@ -6,6 +6,9 @@ use serde_json::json;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
+pub enum DemoError {}
+
+#[derive(Error, Debug)]
 pub enum ProxyError {
     #[error("Invalid configuration: {0}")]
     InvalidConfiguration(String),
@@ -121,6 +124,15 @@ pub enum ScenarioError {
 
     #[error("Request error: {0}")]
     UriParseError(#[from] url::ParseError),
+
+    #[error("Failed to read file {0}: {1}")]
+    ReadError(String, #[source] std::io::Error),
+
+    #[error("Failed to parse YAML in file {0}: {1}")]
+    ParseError(String, #[source] serde_yaml::Error),
+
+    #[error("WalkDir error: {0}")]
+    WalkDirError(String),
 
     #[error("Other error: {0}")]
     Other(String),

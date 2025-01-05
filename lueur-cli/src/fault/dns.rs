@@ -2,6 +2,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use axum::async_trait;
+use axum::http;
 use hickory_resolver::TokioAsyncResolver;
 use hickory_resolver::config::*;
 use rand::Rng;
@@ -15,6 +16,9 @@ use tokio::sync::RwLock;
 
 use super::Bidirectional;
 use super::FaultInjector;
+use crate::event::FaultEvent;
+use crate::event::ProxyTaskEvent;
+use crate::types::Direction;
 
 #[derive(Debug, Clone)]
 pub enum DnsStrategy {
@@ -32,6 +36,7 @@ pub struct DnsOptions {
 pub struct FaultyResolverInjector {
     inner: Arc<RwLock<TokioAsyncResolver>>,
     options: DnsOptions,
+    event: Option<Box<dyn ProxyTaskEvent>>,
 }
 
 impl FaultyResolverInjector {
@@ -40,7 +45,7 @@ impl FaultyResolverInjector {
             ResolverConfig::default(),
             ResolverOpts::default(),
         );
-        Self { options, inner: Arc::new(RwLock::new(resolver)) }
+        Self { options, inner: Arc::new(RwLock::new(resolver)), event: None }
     }
 
     fn should_apply_fault_resolver(&self) -> bool {
@@ -48,6 +53,10 @@ impl FaultyResolverInjector {
         match &self.options.strategy {
             DnsStrategy::Fixed { rate, .. } => rng.gen_bool(*rate),
         }
+    }
+
+    pub fn with_event(&mut self, event: Box<dyn ProxyTaskEvent>) {
+        self.event = Some(event);
     }
 }
 
@@ -61,12 +70,25 @@ impl Resolve for FaultyResolverInjector {
             tracing::info!("Apply a dns resolver {}", apply_fault);
 
             if apply_fault {
+                let _ = match self_clone.event {
+                    Some(event) => {
+                        event.with_fault(FaultEvent::Dns { triggered: true })
+                    }
+                    None => Ok(()),
+                };
                 let io_error = std::io::Error::new(
                     std::io::ErrorKind::Other,
                     "Simulated DNS resolution failure",
                 );
                 return Err(io_error.into());
             }
+
+            let _ = match self_clone.event {
+                Some(event) => {
+                    event.with_fault(FaultEvent::Dns { triggered: false })
+                }
+                None => Ok(()),
+            };
 
             let resolver = self_clone.inner.read().await;
             let lookup = resolver.lookup_ip(host).await?;
@@ -85,22 +107,29 @@ impl FaultInjector for FaultyResolverInjector {
     fn inject(
         &self,
         stream: Box<dyn Bidirectional + 'static>,
+        direction: &Direction,
+        event: Box<dyn ProxyTaskEvent>,
     ) -> Box<dyn Bidirectional + 'static> {
         stream
     }
 
     async fn apply_on_response(
         &self,
-        resp: reqwest::Response,
-    ) -> Result<reqwest::Response, crate::errors::ProxyError> {
+        resp: http::Response<Vec<u8>>,
+        event: Box<dyn ProxyTaskEvent>,
+    ) -> Result<http::Response<Vec<u8>>, crate::errors::ProxyError> {
         Ok(resp)
     }
 
     async fn apply_on_request_builder(
         &self,
         builder: reqwest::ClientBuilder,
+        event: Box<dyn ProxyTaskEvent>,
     ) -> Result<reqwest::ClientBuilder, crate::errors::ProxyError> {
-        let resolver: Arc<FaultyResolverInjector> = Arc::new(self.clone());
+        let mut cloned = self.clone();
+        cloned.with_event(event);
+
+        let resolver: Arc<FaultyResolverInjector> = Arc::new(cloned);
         tracing::debug!("Adding faulty dns resolver on builder");
         let builder = builder.dns_resolver(resolver);
         Ok(builder)
@@ -109,6 +138,7 @@ impl FaultInjector for FaultyResolverInjector {
     async fn apply_on_request(
         &self,
         request: reqwest::Request,
+        event: Box<dyn ProxyTaskEvent>,
     ) -> Result<reqwest::Request, crate::errors::ProxyError> {
         Ok(request)
     }

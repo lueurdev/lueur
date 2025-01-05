@@ -1,5 +1,3 @@
-use std::io::Error as IoError;
-use std::io::ErrorKind;
 use std::io::Result as IoResult;
 use std::pin::Pin;
 use std::task::Context;
@@ -8,23 +6,28 @@ use std::time::Duration;
 use std::time::Instant;
 
 use async_trait::async_trait;
-use futures::TryStreamExt;
+use axum::http;
+use bytes::Bytes;
+use bytes::BytesMut;
 use hyper::http::Response;
 use reqwest::Body;
 use reqwest::ClientBuilder as ReqwestClientBuilder;
 use reqwest::Request as ReqwestRequest;
-use reqwest::Response as ReqwestResponse;
 use tokio::io::AsyncRead;
 use tokio::io::AsyncWrite;
 use tokio::io::AsyncWriteExt;
 use tokio::io::ReadBuf;
 use tokio::time::sleep;
+use tokio_stream::StreamExt;
+use tokio_stream::{self as stream};
 use tokio_util::io::ReaderStream;
 use tokio_util::io::StreamReader;
 
 use super::Bidirectional;
 use super::FaultInjector;
 use crate::errors::ProxyError;
+use crate::event::ProxyTaskEvent;
+use crate::types::Direction;
 
 /// Enumeration of jitter strategies.
 #[derive(Debug, Clone)]
@@ -43,6 +46,7 @@ struct BandwidthLimitedStream<S> {
     bytes_per_second: usize,
     tokens: usize,
     last_refill: Instant,
+    direction: Direction,
 }
 
 impl<S: AsyncRead + Unpin> AsyncRead for BandwidthLimitedStream<S> {
@@ -153,12 +157,13 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for BandwidthLimitedStream<S> {
 }
 
 impl<S> BandwidthLimitedStream<S> {
-    fn new(inner: S, bytes_per_second: usize) -> Self {
+    fn new(inner: S, bytes_per_second: usize, direction: &Direction) -> Self {
         Self {
             inner,
             bytes_per_second,
             tokens: bytes_per_second,
             last_refill: Instant::now(),
+            direction: direction.clone(),
         }
     }
 
@@ -203,14 +208,18 @@ impl FaultInjector for BandwidthLimitFaultInjector {
     fn inject(
         &self,
         stream: Box<dyn Bidirectional + 'static>,
+        direction: &Direction,
+        event: Box<dyn ProxyTaskEvent>,
     ) -> Box<dyn Bidirectional + 'static> {
-        let wrapped = BandwidthLimitedStream::new(stream, self.get_bps());
+        let wrapped =
+            BandwidthLimitedStream::new(stream, self.get_bps(), direction);
         Box::new(wrapped)
     }
 
     async fn apply_on_request_builder(
         &self,
         builder: ReqwestClientBuilder,
+        event: Box<dyn ProxyTaskEvent>,
     ) -> Result<ReqwestClientBuilder, ProxyError> {
         Ok(builder)
     }
@@ -218,6 +227,7 @@ impl FaultInjector for BandwidthLimitFaultInjector {
     async fn apply_on_request(
         &self,
         request: ReqwestRequest,
+        event: Box<dyn ProxyTaskEvent>,
     ) -> Result<ReqwestRequest, ProxyError> {
         let original_body = request.body();
         if let Some(body) = original_body {
@@ -225,7 +235,11 @@ impl FaultInjector for BandwidthLimitFaultInjector {
                 let (mut w, r) = tokio::io::duplex(bytes.len());
                 w.write_all(bytes).await.map_err(ProxyError::IoError)?;
                 drop(w);
-                let rl_stream = BandwidthLimitedStream::new(r, self.get_bps());
+                let rl_stream = BandwidthLimitedStream::new(
+                    r,
+                    self.get_bps(),
+                    &Direction::Ingress,
+                );
                 let reader_stream = ReaderStream::new(rl_stream);
                 let new_body = Body::wrap_stream(reader_stream);
                 let mut builder = request.try_clone().ok_or_else(|| {
@@ -243,28 +257,35 @@ impl FaultInjector for BandwidthLimitFaultInjector {
 
     async fn apply_on_response(
         &self,
-        resp: ReqwestResponse,
-    ) -> Result<ReqwestResponse, ProxyError> {
-        let version = resp.version();
-        let status = resp.status();
-        let headers = resp.headers().clone();
+        resp: http::Response<Vec<u8>>,
+        event: Box<dyn ProxyTaskEvent>,
+    ) -> Result<http::Response<Vec<u8>>, ProxyError> {
+        let (parts, body) = resp.into_parts();
+        let version = parts.version;
+        let status = parts.status;
+        let headers = parts.headers.clone();
+        let bytes = Bytes::from(body);
+        let byte_stream = stream::once(Ok::<Bytes, std::io::Error>(bytes));
+        let reader = StreamReader::new(byte_stream);
 
-        let stream =
-            resp.bytes_stream().map_err(|e| IoError::new(ErrorKind::Other, e));
-        let async_read = StreamReader::new(stream);
-        let limited = BandwidthLimitedStream::new(async_read, self.get_bps());
-        let reader_stream = ReaderStream::new(limited);
-        let new_body = Body::wrap_stream(reader_stream);
+        let limited = BandwidthLimitedStream::new(
+            reader,
+            self.get_bps(),
+            &Direction::Egress,
+        );
+        let mut reader_stream = ReaderStream::new(limited);
 
-        // we need to go through a hyper::http::Response first before reworking
-        // it into a reqwest::Response
-        let mut intermediate = Response::new(new_body);
+        let mut buffer = BytesMut::new();
+        while let Some(chunk) = reader_stream.next().await {
+            buffer.extend_from_slice(&chunk?);
+        }
+        let response_body = buffer.to_vec();
+
+        let mut intermediate = Response::new(response_body);
         *intermediate.version_mut() = version;
         *intermediate.status_mut() = status;
         *intermediate.headers_mut() = headers;
 
-        let new_resp = ReqwestResponse::from(intermediate);
-
-        Ok(new_resp)
+        Ok(intermediate)
     }
 }

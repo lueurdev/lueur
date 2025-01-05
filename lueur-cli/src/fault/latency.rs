@@ -5,6 +5,7 @@ use std::task::Context;
 use std::task::Poll;
 
 use axum::async_trait;
+use axum::http;
 use pin_project::pin_project;
 use rand_distr::Distribution;
 use rand_distr::Normal;
@@ -19,6 +20,9 @@ use tokio::time::sleep;
 
 use super::Bidirectional;
 use super::FaultInjector;
+use crate::event::FaultEvent;
+use crate::event::ProxyTaskEvent;
+use crate::types::Direction;
 
 #[derive(Debug, Clone)]
 pub enum LatencyStrategy {
@@ -85,18 +89,29 @@ impl FaultInjector for LatencyInjector {
     fn inject(
         &self,
         stream: Box<dyn Bidirectional + 'static>,
+        direction: &Direction,
+        event: Box<dyn ProxyTaskEvent>,
     ) -> Box<dyn Bidirectional + 'static> {
         let delay = self.get_delay();
-        tracing::info!("Injecting latency {:?}", delay);
-        Box::new(LatencyStream::new(stream, delay))
+        tracing::debug!("Injecting latency {:?} on {}", delay, direction);
+        let _ = event.with_fault(FaultEvent::Latency { delay });
+        let _ =
+            event.on_computed(FaultEvent::Latency { delay }, direction.clone());
+        Box::new(LatencyStream::new(stream, delay, direction, Some(event)))
     }
 
     async fn apply_on_response(
         &self,
-        resp: reqwest::Response,
-    ) -> Result<reqwest::Response, crate::errors::ProxyError> {
+        resp: http::Response<Vec<u8>>,
+        event: Box<dyn ProxyTaskEvent>,
+    ) -> Result<http::Response<Vec<u8>>, crate::errors::ProxyError> {
         let delay = self.get_delay();
-        tracing::info!("Adding latency {:?}", delay);
+        tracing::debug!("Adding latency {:?}", delay);
+        let _ = event.with_fault(FaultEvent::Latency { delay });
+        let _ = event
+            .on_computed(FaultEvent::Latency { delay }, Direction::Ingress);
+        let _ =
+            event.on_applied(FaultEvent::Latency { delay }, Direction::Ingress);
         sleep(delay).await;
         Ok(resp)
     }
@@ -104,6 +119,7 @@ impl FaultInjector for LatencyInjector {
     async fn apply_on_request_builder(
         &self,
         builder: reqwest::ClientBuilder,
+        event: Box<dyn ProxyTaskEvent>,
     ) -> Result<reqwest::ClientBuilder, crate::errors::ProxyError> {
         Ok(builder)
     }
@@ -111,26 +127,38 @@ impl FaultInjector for LatencyInjector {
     async fn apply_on_request(
         &self,
         request: reqwest::Request,
+        event: Box<dyn ProxyTaskEvent>,
     ) -> Result<reqwest::Request, crate::errors::ProxyError> {
         Ok(request)
     }
 }
 
 #[pin_project]
-struct LatencyStream {
+pub struct LatencyStream {
     #[pin]
     stream: Box<dyn Bidirectional + 'static>,
-    #[pin]
-    delay: Duration,
-    #[pin]
+    pub delay: Duration,
+    direction: Direction,
+    event: Option<Box<dyn ProxyTaskEvent>>,
     read_sleep: Option<Pin<Box<Sleep>>>,
-    #[pin]
     write_sleep: Option<Pin<Box<Sleep>>>,
 }
 
 impl LatencyStream {
-    fn new(stream: Box<dyn Bidirectional + 'static>, delay: Duration) -> Self {
-        Self { stream, delay, read_sleep: None, write_sleep: None }
+    fn new(
+        stream: Box<dyn Bidirectional + 'static>,
+        delay: Duration,
+        direction: &Direction,
+        event: Option<Box<dyn ProxyTaskEvent>>,
+    ) -> Self {
+        Self {
+            stream,
+            delay,
+            event,
+            read_sleep: None,
+            write_sleep: None,
+            direction: direction.clone(),
+        }
     }
 }
 
@@ -142,17 +170,30 @@ impl AsyncRead for LatencyStream {
     ) -> Poll<std::io::Result<()>> {
         let mut this = self.project();
 
-        if let Some(sleep_fut) = this.read_sleep.as_mut().as_pin_mut() {
-            match sleep_fut.poll(cx) {
-                Poll::Ready(_) => {
-                    this.read_sleep.set(None);
+        if this.direction.is_ingress() {
+            let delay = *this.delay;
+            if this.read_sleep.is_none() {
+                let event = this.event;
+                if event.is_some() {
+                    let _ = event.clone().unwrap().on_applied(
+                        FaultEvent::Latency { delay },
+                        Direction::Ingress,
+                    );
                 }
-                Poll::Pending => {
-                    return Poll::Pending;
+                this.read_sleep.replace(Box::pin(sleep(delay)));
+            }
+
+            if let Some(delay) = this.read_sleep.as_mut() {
+                match delay.as_mut().poll(cx) {
+                    Poll::Ready(_) => {
+                        this.read_sleep.take();
+                        return this.stream.poll_read(cx, buf);
+                    }
+                    Poll::Pending => {
+                        return Poll::Pending;
+                    }
                 }
             }
-        } else {
-            this.read_sleep.set(Some(Box::pin(sleep(*this.delay))));
         }
 
         Pin::new(&mut **this.stream).poll_read(cx, buf)
@@ -167,17 +208,30 @@ impl AsyncWrite for LatencyStream {
     ) -> Poll<std::io::Result<usize>> {
         let mut this = self.project();
 
-        if let Some(sleep_fut) = this.write_sleep.as_mut().as_pin_mut() {
-            match sleep_fut.poll(cx) {
-                Poll::Ready(_) => {
-                    this.write_sleep.set(None);
+        if this.direction.is_egress() {
+            let delay = *this.delay;
+            if this.write_sleep.is_none() {
+                let event = this.event;
+                if event.is_some() {
+                    let _ = event.clone().unwrap().on_applied(
+                        FaultEvent::Latency { delay },
+                        Direction::Egress,
+                    );
                 }
-                Poll::Pending => {
-                    return Poll::Pending;
+                this.write_sleep.replace(Box::pin(sleep(delay)));
+            }
+
+            if let Some(delay) = this.write_sleep.as_mut() {
+                match delay.as_mut().poll(cx) {
+                    Poll::Ready(_) => {
+                        this.write_sleep.take();
+                        return this.stream.poll_write(cx, buf);
+                    }
+                    Poll::Pending => {
+                        return Poll::Pending;
+                    }
                 }
             }
-        } else {
-            this.write_sleep.set(Some(Box::pin(sleep(*this.delay))));
         }
 
         Pin::new(&mut **this.stream).poll_write(cx, buf)

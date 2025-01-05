@@ -1,14 +1,11 @@
-use std::time::Duration;
-
 use clap::Args;
 use clap::Parser;
 use clap::Subcommand;
-use indicatif::ProgressBar;
-use indicatif::ProgressStyle;
 use serde::Deserialize;
 use serde::Serialize;
 
 use crate::types::BandwidthUnit;
+use crate::types::Direction;
 use crate::types::LatencyDistribution;
 use crate::types::PacketLossType;
 
@@ -19,10 +16,25 @@ use crate::types::PacketLossType;
     long_about = None
 )]
 pub struct Cli {
-    /// Path to the log file
-    #[arg(short, long, default_value = "app.log")]
-    pub log_file: String,
+    /// Path to the log file. Disabled by default
+    #[arg(long)]
+    pub log_file: Option<String>,
 
+    /// Stdout logging enabled
+    #[arg(long, default_value_t = false)]
+    pub log_stdout: bool,
+
+    /// Log level
+    #[arg(long, default_value = "info,tower_http=debug")]
+    pub log_level: Option<String>,
+
+    #[command(subcommand)]
+    pub command: Commands,
+}
+
+/// Common options for all Proxy aware commands
+#[derive(Args, Clone, Debug, Serialize, Deserialize)]
+pub struct ProxyAwareCommandCommon {
     /// Listening address for the proxy server
     #[arg(
         long = "proxy-address",
@@ -61,29 +73,40 @@ pub struct Cli {
     /// Target hosts to match against (can be specified multiple times)
     #[arg(
         short,
-        long,
+        long = "upstream",
         help = "Host to proxy.",
         requires_if("host", "ebpf"),
         value_parser
     )]
     pub upstream_hosts: Vec<String>,
-
-    #[command(subcommand)]
-    pub command: Commands,
 }
 
 #[derive(Subcommand, Debug)]
 pub enum Commands {
     /// Apply a network fault
-    #[command(subcommand)]
-    Run(RunCommands),
+    Run {
+        #[command(subcommand)]
+        run: RunCommands,
+
+        #[command(flatten)]
+        common: ProxyAwareCommandCommon,
+    },
 
     /// Execute a predefined scenario
+    Scenario {
+        #[command(subcommand)]
+        scenario: ScenarioCommands,
+
+        #[command(flatten)]
+        common: ProxyAwareCommandCommon,
+    },
+
+    /// Run a simple demo server for learning purpose
     #[command(subcommand)]
-    Scenario(ScenarioCommands),
+    Demo(DemoCommands),
 }
 
-#[derive(Subcommand, Debug)]
+#[derive(Subcommand, Debug, Clone)]
 pub enum RunCommands {
     /// Apply a latency fault
     Latency(RunCommandLatency),
@@ -108,6 +131,13 @@ pub enum ScenarioCommands {
     Run(ScenarioConfig),
 }
 
+/// Subcommands for executing a demo server
+#[derive(Subcommand, Debug)]
+pub enum DemoCommands {
+    /// Execute a demo server for learning purpose
+    Run(DemoConfig),
+}
+
 /// Configuration for executing scenarios
 #[derive(Args, Clone, Debug, Serialize, Deserialize)]
 pub struct ScenarioConfig {
@@ -128,9 +158,38 @@ pub struct ScenarioConfig {
     pub proxy_address: Option<String>,
 }
 
+/// Configuration for executing the demo server
+#[derive(Args, Clone, Debug, Serialize, Deserialize)]
+pub struct DemoConfig {
+    /// Listening address for the demo server
+    #[arg(
+        help = "Listening address for the proxy server. Overrides the one defined in the scenario.",
+        default_value = "127.0.0.1",
+        value_parser
+    )]
+    pub address: String,
+
+    /// Listening port for the demo server
+    #[arg(
+        help = "Listening address for the proxy server. Overrides the one defined in the scenario.",
+        default_value_t = 7070,
+        value_parser
+    )]
+    pub port: u16,
+}
+
 /// Common options for all RunCommands
 #[derive(Args, Clone, Debug, Serialize, Deserialize)]
-pub struct RunCommandCommon {}
+pub struct RunCommandCommon {
+    /// Direction to apply the latency on
+    #[arg(
+        long,
+        default_value_t = Direction::Both,
+        value_enum,
+        help = "Fault's direction.",
+    )]
+    pub direction: Direction,
+}
 
 /// CLI Configuration for Latency Fault
 #[derive(Args, Clone, Debug, Serialize, Deserialize)]
@@ -370,45 +429,5 @@ fn validate_positive_u8(val: &str) -> Result<u8, String> {
         Ok(v) if v > 0 => Ok(v),
         Ok(_) => Err(String::from("Value must be a positive integer.")),
         Err(_) => Err(String::from("Invalid unsigned integer.")),
-    }
-}
-
-pub struct Spinner {
-    pb: ProgressBar,
-}
-
-impl Spinner {
-    /// Creates a new spinner with the given message.
-    pub fn new(message: &str) -> Self {
-        let pb = ProgressBar::new_spinner();
-        pb.set_style(
-            ProgressStyle::default_spinner()
-                .tick_strings(&[
-                    "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏",
-                ])
-                .template("{spinner} {msg}")
-                .expect("Failed to set spinner template"),
-        );
-        pb.enable_steady_tick(Duration::from_millis(100)); // Update every 100 ms
-        pb.set_message(message.to_string());
-
-        Spinner { pb }
-    }
-
-    /// Updates the spinner's message.
-    pub fn set_message(&self, message: &str) {
-        self.pb.set_message(message.to_string());
-    }
-
-    /// Finishes the spinner with a final message.
-    #[allow(dead_code)]
-    pub fn finish(&self, message: &str) {
-        self.pb.finish_with_message(message.to_string());
-    }
-}
-
-pub fn set_spinner_message(spinner: Option<&Spinner>, message: &str) {
-    if let Some(s) = spinner {
-        s.set_message(message)
     }
 }

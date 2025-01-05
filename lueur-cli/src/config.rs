@@ -9,6 +9,7 @@ use crate::cli::CliJitterConfig;
 use crate::cli::CliLatencyConfig;
 use crate::cli::CliPacketLossConfig;
 use crate::errors::ProxyError;
+use crate::types::Direction;
 use crate::types::LatencyDistribution;
 use crate::types::PacketLossType;
 
@@ -16,6 +17,7 @@ use crate::types::PacketLossType;
 #[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq)]
 pub struct LatencySettings {
     pub distribution: LatencyDistribution,
+    pub direction: Direction,
     pub latency_mean: f64,
     pub latency_stddev: f64,
     pub latency_shape: f64,
@@ -27,6 +29,7 @@ pub struct LatencySettings {
 /// Internal Configuration for Packet Loss Fault
 #[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq)]
 pub struct PacketLossSettings {
+    pub direction: Direction,
     pub loss_type: PacketLossType,
     pub packet_loss_rate: f64,
 }
@@ -34,12 +37,14 @@ pub struct PacketLossSettings {
 /// Internal Configuration for Bandwidth Throttling Fault
 #[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq)]
 pub struct BandwidthSettings {
+    pub direction: Direction,
     pub bandwidth_rate: u32, // in kbps
 }
 
 /// Internal Configuration for Jitter Fault
 #[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq)]
 pub struct JitterSettings {
+    pub direction: Direction,
     pub jitter_amplitude: f64, // in milliseconds
     pub jitter_frequency: f64, // in Hertz
 }
@@ -47,6 +52,7 @@ pub struct JitterSettings {
 /// Internal Configuration for DNS Fault
 #[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq)]
 pub struct DnsSettings {
+    pub direction: Direction,
     pub dns_rate: u8, // between 0 and 100
 }
 
@@ -140,13 +146,19 @@ impl ProxyConfig {
         Ok(Self { fault: fault_config })
     }
 
-    pub fn new_dns(config: CliDNSConfig) -> Result<Self, String> {
-        let dns_settings = DnsSettings { dns_rate: config.rate };
+    pub fn new_dns(
+        config: CliDNSConfig,
+        direction: Direction,
+    ) -> Result<Self, String> {
+        let dns_settings = DnsSettings { dns_rate: config.rate, direction };
         let fault_config = FaultConfig::Dns(dns_settings);
         Ok(Self { fault: fault_config })
     }
 
-    pub fn new_latency(config: CliLatencyConfig) -> Result<Self, String> {
+    pub fn new_latency(
+        config: CliLatencyConfig,
+        direction: Direction,
+    ) -> Result<Self, String> {
         let latency_settings = LatencySettings {
             distribution: config.distribution,
             latency_mean: config.mean,
@@ -155,6 +167,7 @@ impl ProxyConfig {
             latency_max: config.max,
             latency_shape: config.shape,
             latency_scale: config.scale,
+            direction,
         };
         let fault_config = FaultConfig::Latency(latency_settings);
         Ok(Self { fault: fault_config })
@@ -162,26 +175,35 @@ impl ProxyConfig {
 
     pub fn new_packet_loss(
         config: CliPacketLossConfig,
+        direction: Direction,
     ) -> Result<Self, String> {
         let packet_loss_settings = PacketLossSettings {
             loss_type: config.loss_type,
             packet_loss_rate: config.rate,
+            direction,
         };
         let fault_config = FaultConfig::PacketLoss(packet_loss_settings);
         Ok(Self { fault: fault_config })
     }
 
-    pub fn new_bandwidth(config: CliBandwidthConfig) -> Result<Self, String> {
+    pub fn new_bandwidth(
+        config: CliBandwidthConfig,
+        direction: Direction,
+    ) -> Result<Self, String> {
         let bandwidth_settings =
-            BandwidthSettings { bandwidth_rate: config.rate };
+            BandwidthSettings { bandwidth_rate: config.rate, direction };
         let fault_config = FaultConfig::Bandwidth(bandwidth_settings);
         Ok(Self { fault: fault_config })
     }
 
-    pub fn new_jitter(config: CliJitterConfig) -> Result<Self, String> {
+    pub fn new_jitter(
+        config: CliJitterConfig,
+        direction: Direction,
+    ) -> Result<Self, String> {
         let jitter_settings = JitterSettings {
             jitter_amplitude: config.amplitude,
             jitter_frequency: config.frequency,
+            direction,
         };
         let fault_config = FaultConfig::Jitter(jitter_settings);
         Ok(Self { fault: fault_config })

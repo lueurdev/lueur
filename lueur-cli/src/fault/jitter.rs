@@ -5,6 +5,7 @@ use std::task::Context;
 use std::task::Poll;
 
 use async_trait::async_trait;
+use axum::http;
 use pin_project::pin_project;
 use rand::Rng;
 use rand::SeedableRng;
@@ -18,6 +19,8 @@ use tokio::time::sleep;
 
 use super::Bidirectional;
 use super::FaultInjector;
+use crate::event::ProxyTaskEvent;
+use crate::types::Direction;
 
 /// Enumeration of jitter strategies.
 #[derive(Debug, Clone)]
@@ -76,20 +79,24 @@ impl FaultInjector for JitterInjector {
     fn inject(
         &self,
         stream: Box<dyn Bidirectional + 'static>,
+        direction: &Direction,
+        event: Box<dyn ProxyTaskEvent>,
     ) -> Box<dyn Bidirectional + 'static> {
-        Box::new(JitterStream::new(stream, self.clone()))
+        Box::new(JitterStream::new(stream, self.clone(), direction))
     }
 
     async fn apply_on_response(
         &self,
-        resp: reqwest::Response,
-    ) -> Result<reqwest::Response, crate::errors::ProxyError> {
+        resp: http::Response<Vec<u8>>,
+        event: Box<dyn ProxyTaskEvent>,
+    ) -> Result<http::Response<Vec<u8>>, crate::errors::ProxyError> {
         Ok(resp)
     }
 
     async fn apply_on_request_builder(
         &self,
         builder: reqwest::ClientBuilder,
+        event: Box<dyn ProxyTaskEvent>,
     ) -> Result<reqwest::ClientBuilder, crate::errors::ProxyError> {
         Ok(builder)
     }
@@ -97,6 +104,7 @@ impl FaultInjector for JitterInjector {
     async fn apply_on_request(
         &self,
         request: reqwest::Request,
+        event: Box<dyn ProxyTaskEvent>,
     ) -> Result<reqwest::Request, crate::errors::ProxyError> {
         Ok(request)
     }
@@ -115,6 +123,8 @@ pub struct JitterStream {
     read_sleep: Option<Pin<Box<Sleep>>>,
     #[pin]
     write_sleep: Option<Pin<Box<Sleep>>>,
+    #[pin]
+    direction: Direction,
 }
 
 impl JitterStream {
@@ -122,6 +132,7 @@ impl JitterStream {
     fn new(
         stream: Box<dyn Bidirectional + 'static>,
         injector: JitterInjector,
+        direction: &Direction,
     ) -> Self {
         Self {
             stream,
@@ -129,6 +140,7 @@ impl JitterStream {
             rng: SmallRng::from_entropy(),
             read_sleep: None,
             write_sleep: None,
+            direction: direction.clone(),
         }
     }
 }
@@ -141,21 +153,23 @@ impl AsyncRead for JitterStream {
     ) -> Poll<std::io::Result<()>> {
         let mut this = self.project();
 
-        if let Some(sleep_fut) = this.read_sleep.as_mut().as_pin_mut() {
-            match sleep_fut.poll(cx) {
-                Poll::Ready(_) => {
-                    this.read_sleep.set(None);
+        if this.direction.is_ingress() {
+            if let Some(sleep_fut) = this.read_sleep.as_mut().as_pin_mut() {
+                match sleep_fut.poll(cx) {
+                    Poll::Ready(_) => {
+                        this.read_sleep.set(None);
+                    }
+                    Poll::Pending => {
+                        return Poll::Pending;
+                    }
                 }
-                Poll::Pending => {
-                    return Poll::Pending;
+            } else {
+                let injector = this.injector;
+                let mut rng = this.rng;
+                if injector.should_jitter(&mut rng) {
+                    let jitter_duration = injector.generate_jitter(&mut rng);
+                    this.read_sleep.set(Some(Box::pin(sleep(jitter_duration))));
                 }
-            }
-        } else {
-            let injector = this.injector;
-            let mut rng = this.rng;
-            if injector.should_jitter(&mut rng) {
-                let jitter_duration = injector.generate_jitter(&mut rng);
-                this.read_sleep.set(Some(Box::pin(sleep(jitter_duration))));
             }
         }
 
@@ -171,21 +185,24 @@ impl AsyncWrite for JitterStream {
     ) -> Poll<std::io::Result<usize>> {
         let mut this = self.project();
 
-        if let Some(sleep_fut) = this.write_sleep.as_mut().as_pin_mut() {
-            match sleep_fut.poll(cx) {
-                Poll::Ready(_) => {
-                    this.write_sleep.set(None);
+        if this.direction.is_egress() {
+            if let Some(sleep_fut) = this.write_sleep.as_mut().as_pin_mut() {
+                match sleep_fut.poll(cx) {
+                    Poll::Ready(_) => {
+                        this.write_sleep.set(None);
+                    }
+                    Poll::Pending => {
+                        return Poll::Pending;
+                    }
                 }
-                Poll::Pending => {
-                    return Poll::Pending;
+            } else {
+                let injector = this.injector;
+                let mut rng = this.rng;
+                if injector.should_jitter(&mut rng) {
+                    let jitter_duration = injector.generate_jitter(&mut rng);
+                    this.write_sleep
+                        .set(Some(Box::pin(sleep(jitter_duration))));
                 }
-            }
-        } else {
-            let injector = this.injector;
-            let mut rng = this.rng;
-            if injector.should_jitter(&mut rng) {
-                let jitter_duration = injector.generate_jitter(&mut rng);
-                this.write_sleep.set(Some(Box::pin(sleep(jitter_duration))));
             }
         }
 
