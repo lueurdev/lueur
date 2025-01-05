@@ -158,7 +158,7 @@ async fn multi() -> Json<Pong> {
 
     let client = builder.build().unwrap();
 
-    let urls = vec!["https://www.example.com/", "https://postman-echo.com/get"];
+    let urls = ["https://www.example.com/", "https://postman-echo.com/get"];
 
     let start = Instant::now();
 

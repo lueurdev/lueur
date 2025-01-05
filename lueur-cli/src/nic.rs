@@ -141,7 +141,7 @@ pub fn determine_proxy_and_ebpf_config(
                     })?;
 
             // Get eBPF interface index.
-            let ebpf_idx = get_ifindex(&ebpf_iface_name)?;
+            let ebpf_idx = get_ifindex(ebpf_iface_name)?;
             ebpf_ifindex = Some(ebpf_idx);
 
             // Ensure proxy is not on the same interface.
@@ -158,7 +158,7 @@ pub fn determine_proxy_and_ebpf_config(
                 )?;
 
             // Get proxy interface index.
-            proxy_idx = get_ifindex(&proxy_iface_name)?;
+            proxy_idx = get_ifindex(proxy_iface_name)?;
             proxy_ifindex = None;
         } else {
             // Proxy is on a real NIC; ensure eBPF is not on the same NIC.
@@ -174,7 +174,7 @@ pub fn determine_proxy_and_ebpf_config(
                 )?;
 
             // Get proxy interface index.
-            proxy_idx = get_ifindex(&proxy_iface_name)?;
+            proxy_idx = get_ifindex(proxy_iface_name)?;
             proxy_ifindex = Some(proxy_idx);
 
             // Now, ensure eBPF interface is different from proxy interface.
@@ -196,7 +196,7 @@ pub fn determine_proxy_and_ebpf_config(
             }*/
 
             // Get eBPF interface index.
-            let ebpf_idx = get_ifindex(&ebpf_iface_name)?;
+            let ebpf_idx = get_ifindex(ebpf_iface_name)?;
             ebpf_ifindex = Some(ebpf_idx);
         }
 
@@ -249,7 +249,7 @@ pub fn determine_proxy_and_ebpf_config(
                 let (non_loopback_iface_name, non_loopback_iface) = find_first_non_loopback(&interfaces)
                     .ok_or_else(|| "No non-loopback network interfaces found for eBPF program".to_string())?;
 
-                let ebpf_idx = get_ifindex(&non_loopback_iface_name)?;
+                let ebpf_idx = get_ifindex(non_loopback_iface_name)?;
                 ebpf_ifindex = Some(ebpf_idx);
 
                 let (proxy_iface_name, proxy_iface) = find_interface_by_ip(
@@ -264,7 +264,7 @@ pub fn determine_proxy_and_ebpf_config(
                 })?;
 
                 // Get proxy interface index.
-                let proxy_idx = get_ifindex(&proxy_iface_name)?;
+                let proxy_idx = get_ifindex(proxy_iface_name)?;
 
                 return Ok(ProxyEbpfConfig {
                     proxy_ip,
@@ -289,13 +289,13 @@ pub fn determine_proxy_and_ebpf_config(
                     )
                 })?;
 
-                let proxy_idx = get_ifindex(&proxy_iface_name)?;
+                let proxy_idx = get_ifindex(proxy_iface_name)?;
 
                 // Choose another non-loopback interface for eBPF.
                 let (ebpf_iface_name, ebpf_iface) = interfaces.iter().find(|iface| iface.0 != *proxy_iface_name && !iface.1.is_loopback())
                     .ok_or_else(|| "No alternative non-loopback network interface found for eBPF program".to_string())?;
 
-                let ebpf_idx = get_ifindex(&ebpf_iface_name)?;
+                let ebpf_idx = get_ifindex(ebpf_iface_name)?;
                 ebpf_ifindex = Some(ebpf_idx);
 
                 // Ensure eBPF interface is different from proxy interface.
@@ -337,7 +337,7 @@ pub fn determine_proxy_and_ebpf_config(
                         )
                     })?;
 
-            let ebpf_idx = get_ifindex(&ebpf_iface_name)?;
+            let ebpf_idx = get_ifindex(ebpf_iface_name)?;
             ebpf_ifindex = Some(ebpf_idx);
 
             let (proxy_iface_name, proxy_iface) =
@@ -351,7 +351,7 @@ pub fn determine_proxy_and_ebpf_config(
                 )?;
 
             // Get proxy interface index.
-            let proxy_idx = get_ifindex(&proxy_iface_name)?;
+            let proxy_idx = get_ifindex(proxy_iface_name)?;
             proxy_ifindex = None;
 
             return Ok(ProxyEbpfConfig {
@@ -391,7 +391,7 @@ pub fn determine_proxy_and_ebpf_config(
                 let (non_loopback_iface_name, non_loopback_iface) = find_first_non_loopback(&interfaces)
                     .ok_or_else(|| "No non-loopback network interfaces found for eBPF program".to_string())?;
 
-                let ebpf_idx = get_ifindex(&non_loopback_iface_name)?;
+                let ebpf_idx = get_ifindex(non_loopback_iface_name)?;
                 ebpf_ifindex = Some(ebpf_idx);
 
                 // Proxy is on loopback; no proxy_ifindex needed.
@@ -407,7 +407,7 @@ pub fn determine_proxy_and_ebpf_config(
                 })?;
 
                 // Get proxy interface index.
-                let proxy_idx = get_ifindex(&proxy_iface_name)?;
+                let proxy_idx = get_ifindex(proxy_iface_name)?;
                 proxy_ifindex = None;
 
                 return Ok(ProxyEbpfConfig {
@@ -433,14 +433,14 @@ pub fn determine_proxy_and_ebpf_config(
                     )
                 })?;
 
-                let proxy_idx = get_ifindex(&proxy_iface_name)?;
+                let proxy_idx = get_ifindex(proxy_iface_name)?;
                 proxy_ifindex = Some(proxy_idx);
 
                 // Choose another non-loopback interface for eBPF.
                 let (ebpf_iface_name, ebpf_iface) = interfaces.iter().find(|iface| iface.0 != *proxy_iface_name && !iface.1.is_loopback())
                     .ok_or_else(|| "No alternative non-loopback network interface found for eBPF program".to_string())?;
 
-                let ebpf_idx = get_ifindex(&ebpf_iface_name)?;
+                let ebpf_idx = get_ifindex(ebpf_iface_name)?;
                 ebpf_ifindex = Some(ebpf_idx);
 
                 // Ensure eBPF interface is different from proxy interface.
@@ -477,7 +477,7 @@ pub fn determine_proxy_and_ebpf_config(
                     .to_string()
             })?;
 
-        let ebpf_idx = get_ifindex(&non_loopback_iface_name)?;
+        let ebpf_idx = get_ifindex(non_loopback_iface_name)?;
         ebpf_ifindex = Some(ebpf_idx);
 
         // Proxy is on loopback; no proxy_ifindex needed.
@@ -490,7 +490,7 @@ pub fn determine_proxy_and_ebpf_config(
             })?;
 
         // Get proxy interface index.
-        let proxy_idx = get_ifindex(&proxy_iface_name)?;
+        let proxy_idx = get_ifindex(proxy_iface_name)?;
         proxy_ifindex = None;
 
         return Ok(ProxyEbpfConfig {

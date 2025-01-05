@@ -41,7 +41,7 @@ impl ProxyState {
             plugins: Arc::new(RwLock::new(Vec::new())),
             shared_config: Arc::new(RwLock::new(ProxyConfig::default())),
             upstream_hosts: Arc::new(RwLock::new(Vec::new())),
-            stealth: stealth,
+            stealth,
         }
     }
 
@@ -100,8 +100,7 @@ pub async fn run_proxy(
             let host_header = req
                 .headers()
                 .get(axum::http::header::HOST)
-                .map(|v| v.to_str().ok().map(|s| s.to_string()))
-                .flatten();
+                .and_then(|v| v.to_str().ok().map(|s| s.to_string()));
 
             let path = match req.uri().path_and_query() {
                 Some(path) => path.to_string(),
@@ -165,7 +164,7 @@ pub async fn run_proxy(
                     Ok(r) => r,
                     Err(e) => e.into_response(),
                 };
-                Ok(hyper::Response::from(resp))
+                Ok(resp)
             } else {
                 tracing::info!(
                     "Processing forward request to {}",
@@ -184,7 +183,7 @@ pub async fn run_proxy(
                     Ok(r) => r,
                     Err(e) => e.into_response(),
                 };
-                Ok(hyper::Response::from(resp))
+                Ok(resp)
             }
         }
     });

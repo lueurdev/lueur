@@ -73,11 +73,11 @@ impl Direction {
     }
 
     pub fn is_ingress(&self) -> bool {
-        return self == &Direction::Ingress || self == &Direction::Both;
+        self == &Direction::Ingress || self == &Direction::Both
     }
 
     pub fn is_egress(&self) -> bool {
-        return self == &Direction::Egress || self == &Direction::Both;
+        self == &Direction::Egress || self == &Direction::Both
     }
 }
 
@@ -186,7 +186,7 @@ impl FaultConfiguration {
         match self {
             FaultConfiguration::Bandwidth { bandwidth_rate, direction } => {
                 let settings = config::BandwidthSettings {
-                    direction: Direction::from_str(&direction).unwrap(),
+                    direction: Direction::from_str(direction).unwrap(),
                     bandwidth_rate: *bandwidth_rate,
                 };
 
@@ -227,10 +227,10 @@ impl FaultConfiguration {
                 direction,
             } => {
                 let settings = config::PacketLossSettings {
-                    loss_type: PacketLossType::from_str(&packet_loss_type)
+                    loss_type: PacketLossType::from_str(packet_loss_type)
                         .unwrap(),
                     packet_loss_rate: *packet_loss_rate,
-                    direction: Direction::from_str(&direction).unwrap(),
+                    direction: Direction::from_str(direction).unwrap(),
                 };
 
                 Ok(FaultConfig::PacketLoss(settings))
@@ -241,7 +241,7 @@ impl FaultConfiguration {
                 direction,
             } => {
                 let settings = config::JitterSettings {
-                    direction: Direction::from_str(&direction).unwrap(),
+                    direction: Direction::from_str(direction).unwrap(),
                     jitter_amplitude: *jitter_amplitude,
                     jitter_frequency: *jitter_frequency,
                 };
@@ -250,7 +250,7 @@ impl FaultConfiguration {
             }
             FaultConfiguration::Dns { dns_rate, direction } => {
                 let settings = config::DnsSettings {
-                    direction: Direction::from_str(&direction).unwrap(),
+                    direction: Direction::from_str(direction).unwrap(),
                     dns_rate: *dns_rate,
                 };
 

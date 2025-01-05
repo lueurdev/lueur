@@ -168,7 +168,7 @@ pub async fn handle_connect(
                         drop(plugins_lock);
                     }
 
-                    let stream = match copy_bidirectional(
+                    match copy_bidirectional(
                         &mut *modified_client_stream,
                         &mut *modified_server_stream,
                     )
@@ -197,7 +197,7 @@ pub async fn handle_connect(
                         }
                     };
 
-                    stream
+                    
                 }
                 Err(e) => {
                     error!(

@@ -100,7 +100,7 @@ pub fn init_logging(
         layers.push(stdout_layer);
     }
 
-    if layers.len() > 0 {
+    if !layers.is_empty() {
         let subscriber = tracing_subscriber::registry().with(layers);
 
         tracing::subscriber::set_global_default(subscriber)?;

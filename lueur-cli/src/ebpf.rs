@@ -42,7 +42,7 @@ pub fn install_and_run(
 
     tracing::info!("Ebpf programs bound to interface {}", iface_name);
 
-    let _ = match tc::qdisc_add_clsact(&iface_name) {
+    match tc::qdisc_add_clsact(iface_name) {
         Ok(_) => tracing::info!("qdisc attached to {}", iface_name),
         Err(e) => tracing::debug!("Attach {} to qdisc: {:?}", iface_name, e),
     };
@@ -50,12 +50,12 @@ pub fn install_and_run(
     let ingress_program: &mut SchedClassifier =
         ebpf.program_mut("lueur_route_ingress").unwrap().try_into()?;
 
-    let _ = match ingress_program.load() {
+    match ingress_program.load() {
         Ok(_) => tracing::debug!("Ingress program attached"),
         Err(e) => tracing::error!("Ingress program failed to load {:?}", e),
     };
 
-    let _ = match ingress_program.attach(iface, TcAttachType::Ingress) {
+    match ingress_program.attach(iface, TcAttachType::Ingress) {
         Ok(_) => tracing::debug!("Ingress program loaded"),
         Err(e) => {
             tracing::error!("Ingress program failed to be attached {:?}", e)
@@ -65,12 +65,12 @@ pub fn install_and_run(
     let egress_program: &mut SchedClassifier =
         ebpf.program_mut("lueur_route_egress").unwrap().try_into()?;
 
-    let _ = match egress_program.load() {
+    match egress_program.load() {
         Ok(_) => tracing::debug!("Egress program loaded"),
         Err(e) => tracing::error!("Egress program failed to load{:?}", e),
     };
 
-    let _ = match egress_program.attach(iface, TcAttachType::Egress) {
+    match egress_program.attach(iface, TcAttachType::Egress) {
         Ok(_) => tracing::debug!("Egress program attached"),
         Err(e) => {
             tracing::error!("Egress program failed to be attached {:?}", e)

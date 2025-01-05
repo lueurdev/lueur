@@ -623,12 +623,9 @@ pub async fn handle_scenario_events(
                                 current = Some(ScenarioItemLifecycle::new(url))
                             },
                             ScenarioItemEvent::Terminated { id } => {
-                                match current {
-                                    Some(ref lifecycle) => {
-                                        let mut queue_lock = queue.lock().unwrap();
-                                        queue_lock.push(lifecycle.clone());
-                                    }
-                                    None => {}
+                                if let Some(ref lifecycle) = current {
+                                    let mut queue_lock = queue.lock().unwrap();
+                                    queue_lock.push(lifecycle.clone());
                                 }
                             }
                         }
@@ -647,45 +644,30 @@ pub async fn handle_scenario_events(
                     Ok(event) => {
                         match event {
                             TaskProgressEvent::Started { id, ts, url } => {
-                                match current {
-                                    Some(ref mut item) => { item.url = url; },
-                                    None => {}
-                                }
+                                if let Some(ref mut item) = current { item.url = url; }
                             }
                             TaskProgressEvent::WithFault { id, ts, fault } => {
-                                match current {
-                                    Some(ref mut item) => {
-                                        item.fault_declared = Some(fault.clone());
-                                    },
-                                    None => {}
+                                if let Some(ref mut item) = current {
+                                    item.fault_declared = Some(fault.clone());
                                 }
                             }
                             TaskProgressEvent::IpResolved { id, ts, domain, time_taken } => {
-                                match current {
-                                    Some(ref mut item) => {
-                                        item.dns_timing.push(DnsTiming { host: domain, duration: time_taken, resolved: true });
-                                    },
-                                    None => {}
+                                if let Some(ref mut item) = current {
+                                    item.dns_timing.push(DnsTiming { host: domain, duration: time_taken, resolved: true });
                                 }
                             },
                             TaskProgressEvent::FaultComputed { id, ts, fault, direction } => {
-                                match current {
-                                    Some(ref mut item) => {
-                                        let mut f = ScenarioItemLifecycleFaults::new(item.url.clone());
-                                        f.computed = Some((item.url.clone(), fault.clone(), direction));
-                                        item.faults.insert(id, f);
-                                    },
-                                    None => {}
+                                if let Some(ref mut item) = current {
+                                    let mut f = ScenarioItemLifecycleFaults::new(item.url.clone());
+                                    f.computed = Some((item.url.clone(), fault.clone(), direction));
+                                    item.faults.insert(id, f);
                                 }
                             },
                             TaskProgressEvent::FaultApplied { id, ts, fault, direction } => {
-                                match current {
-                                    Some(ref mut item) => {
-                                        if let Some(f) = item.faults.get_mut(&id) {
-                                            f.applied.push((item.url.clone(), fault.clone(), direction));
-                                        }
-                                    },
-                                    None => {}
+                                if let Some(ref mut item) = current {
+                                    if let Some(f) = item.faults.get_mut(&id) {
+                                        f.applied.push((item.url.clone(), fault.clone(), direction));
+                                    }
                                 }
                             },
                             TaskProgressEvent::ResponseReceived { id, ts, status_code } => {},

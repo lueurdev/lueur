@@ -211,7 +211,7 @@ pub fn pretty_report(report: Report) -> Result<String, Box<dyn std::error::Error
         *endpoint_request_counts.entry(endpoint.clone()).or_insert(0) += 1;
         match item.expect.as_ref().unwrap() {
             ReportItemExpectation::Http { wanted, got } => {
-                if &got.as_ref().unwrap().decision == &ReportItemExpectationDecision::Failure {
+                if got.as_ref().unwrap().decision == ReportItemExpectationDecision::Failure {
                     *endpoint_error_counts.entry(endpoint.clone()).or_insert(0) += 1;
                 }
             },

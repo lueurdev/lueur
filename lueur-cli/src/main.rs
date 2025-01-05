@@ -90,7 +90,7 @@ async fn main() -> Result<()> {
             .unwrap();
 
             let app_state = initialize_proxy(
-                &common,
+                common,
                 &proxy_nic_config,
                 shutdown_rx,
                 task_manager.clone(),
@@ -137,7 +137,7 @@ async fn main() -> Result<()> {
                 let m = MultiProgress::new();
 
                 let app_state = initialize_proxy(
-                    &common,
+                    common,
                     &proxy_nic_config,
                     shutdown_rx,
                     task_manager.clone(),
