@@ -140,7 +140,7 @@ impl RpcPluginManager {
     }
 
     /// Lists all connected plugins with their metadata.
-    pub async fn list_plugins(&self) -> Vec<RemotePlugin> {
+    pub async fn _list_plugins(&self) -> Vec<RemotePlugin> {
         let plugins = self.plugins.read().await;
         plugins.clone()
     }
@@ -287,7 +287,7 @@ impl ProxyPlugin for RpcPlugin {
     async fn prepare_client(
         &self,
         builder: reqwest::ClientBuilder,
-        event: Box<dyn ProxyTaskEvent>,
+        _event: Box<dyn ProxyTaskEvent>,
     ) -> Result<reqwest::ClientBuilder, ProxyError> {
         Ok(builder)
     }
@@ -295,7 +295,7 @@ impl ProxyPlugin for RpcPlugin {
     async fn process_request(
         &self,
         req: ReqwestRequest,
-        event: Box<dyn ProxyTaskEvent>,
+        _event: Box<dyn ProxyTaskEvent>,
     ) -> Result<ReqwestRequest, ProxyError> {
         self.manager.process_request(req).await
     }
@@ -303,7 +303,7 @@ impl ProxyPlugin for RpcPlugin {
     async fn process_response(
         &self,
         resp: http::Response<Vec<u8>>,
-        event: Box<dyn ProxyTaskEvent>,
+        _event: Box<dyn ProxyTaskEvent>,
     ) -> Result<http::Response<Vec<u8>>, ProxyError> {
         self.manager.process_response(resp).await
     }
@@ -311,7 +311,7 @@ impl ProxyPlugin for RpcPlugin {
     async fn process_connect_request(
         &self,
         req: ConnectRequest,
-        event: Box<dyn ProxyTaskEvent>,
+        _event: Box<dyn ProxyTaskEvent>,
     ) -> Result<ConnectRequest, ProxyError> {
         // Implement as needed
         Ok(req)
@@ -320,7 +320,7 @@ impl ProxyPlugin for RpcPlugin {
     async fn process_connect_response(
         &self,
         _success: bool,
-        event: Box<dyn ProxyTaskEvent>,
+        _event: Box<dyn ProxyTaskEvent>,
     ) -> Result<(), ProxyError> {
         // Implement as needed
         Ok(())
@@ -330,7 +330,7 @@ impl ProxyPlugin for RpcPlugin {
         &self,
         client_stream: Box<dyn Bidirectional + 'static>,
         server_stream: Box<dyn Bidirectional + 'static>,
-        event: Box<dyn ProxyTaskEvent>,
+        _event: Box<dyn ProxyTaskEvent>,
     ) -> Result<
         (Box<dyn Bidirectional + 'static>, Box<dyn Bidirectional + 'static>),
         ProxyError,

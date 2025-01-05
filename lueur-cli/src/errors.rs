@@ -35,18 +35,11 @@ pub enum ProxyError {
     #[error("Invalid request: {0}")]
     InvalidRequest(String),
 
-    /// Represents invalid header errors.
-    #[error("Invalid header: {0}")]
-    InvalidHeader(String),
-
     #[error("Other error: {0}")]
     Other(String),
 
     #[error("Internal error: {0}")]
     Internal(String),
-
-    #[error("Fault triggered error: {0} {0}")]
-    FaultTriggeredError(u16, String),
 }
 
 impl IntoResponse for ProxyError {
@@ -89,10 +82,6 @@ impl IntoResponse for ProxyError {
                 StatusCode::BAD_REQUEST,
                 json!({ "error": format!("Invalid Request: {}", msg) }),
             ),
-            ProxyError::InvalidHeader(msg) => (
-                StatusCode::BAD_REQUEST,
-                json!({ "error": format!("Invalid Header: {}", msg) }),
-            ),
             ProxyError::Other(msg) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 json!({ "error": format!("Other Error: {}", msg) }),
@@ -101,9 +90,6 @@ impl IntoResponse for ProxyError {
                 StatusCode::INTERNAL_SERVER_ERROR,
                 json!({ "error": format!("Internal Server Error: {}", msg) }),
             ),
-            ProxyError::FaultTriggeredError(status, msg) => {
-                (StatusCode::from_u16(status).unwrap(), json!({ "error": msg }))
-            }
         };
 
         // Convert the JSON error message and status code into a response
@@ -115,9 +101,6 @@ impl IntoResponse for ProxyError {
 pub enum ScenarioError {
     #[error("IO error: {0}")]
     IoError(#[from] std::io::Error),
-
-    #[error("Load error: {0}")]
-    LoadError(String),
 
     #[error("Report error: {0}")]
     ReportError(String),
@@ -133,7 +116,4 @@ pub enum ScenarioError {
 
     #[error("WalkDir error: {0}")]
     WalkDirError(String),
-
-    #[error("Other error: {0}")]
-    Other(String),
 }

@@ -50,7 +50,7 @@ impl ProxyPlugin for JitterFaultPlugin {
     async fn prepare_client(
         &self,
         builder: reqwest::ClientBuilder,
-        event: Box<dyn ProxyTaskEvent>,
+        _event: Box<dyn ProxyTaskEvent>,
     ) -> Result<reqwest::ClientBuilder, ProxyError> {
         Ok(builder)
     }

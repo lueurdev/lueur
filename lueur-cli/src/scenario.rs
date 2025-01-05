@@ -616,7 +616,7 @@ pub async fn handle_scenario_events(
                             ScenarioItemEvent::Started{ id: _, url } => {
                                 current = Some(ScenarioItemLifecycle::new(url))
                             },
-                            ScenarioItemEvent::Terminated { id } => {
+                            ScenarioItemEvent::Terminated { id: _ } => {
                                 if let Some(ref lifecycle) = current {
                                     let mut queue_lock = queue.lock().unwrap();
                                     queue_lock.push(lifecycle.clone());

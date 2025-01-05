@@ -209,7 +209,7 @@ impl FaultInjector for BandwidthLimitFaultInjector {
         &self,
         stream: Box<dyn Bidirectional + 'static>,
         direction: &Direction,
-        event: Box<dyn ProxyTaskEvent>,
+        _event: Box<dyn ProxyTaskEvent>,
     ) -> Box<dyn Bidirectional + 'static> {
         let wrapped =
             BandwidthLimitedStream::new(stream, self.get_bps(), direction);
@@ -219,7 +219,7 @@ impl FaultInjector for BandwidthLimitFaultInjector {
     async fn apply_on_request_builder(
         &self,
         builder: ReqwestClientBuilder,
-        event: Box<dyn ProxyTaskEvent>,
+        _event: Box<dyn ProxyTaskEvent>,
     ) -> Result<ReqwestClientBuilder, ProxyError> {
         Ok(builder)
     }
@@ -227,7 +227,7 @@ impl FaultInjector for BandwidthLimitFaultInjector {
     async fn apply_on_request(
         &self,
         request: ReqwestRequest,
-        event: Box<dyn ProxyTaskEvent>,
+        _event: Box<dyn ProxyTaskEvent>,
     ) -> Result<ReqwestRequest, ProxyError> {
         let original_body = request.body();
         if let Some(body) = original_body {
@@ -258,7 +258,7 @@ impl FaultInjector for BandwidthLimitFaultInjector {
     async fn apply_on_response(
         &self,
         resp: http::Response<Vec<u8>>,
-        event: Box<dyn ProxyTaskEvent>,
+        _event: Box<dyn ProxyTaskEvent>,
     ) -> Result<http::Response<Vec<u8>>, ProxyError> {
         let (parts, body) = resp.into_parts();
         let version = parts.version;

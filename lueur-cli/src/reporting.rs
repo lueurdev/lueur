@@ -283,7 +283,7 @@ pub fn pretty_report(report: Report) -> Result<String, Box<dyn std::error::Error
 }
 
 /// Summarizes all faults injected into an endpoint into a single string.
-fn summarize_faults(fault: &FaultConfiguration, _faults_applied: &Vec<ReportItemMetricsFaults>) -> String {
+fn summarize_faults(fault: &FaultConfiguration, _faults_applied: &[ReportItemMetricsFaults]) -> String {
     let mut summary = String::new();
 
     summary.push_str(&format!("{}", fault));

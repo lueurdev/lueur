@@ -119,7 +119,7 @@ impl FaultInjector for LatencyInjector {
     async fn apply_on_request_builder(
         &self,
         builder: reqwest::ClientBuilder,
-        event: Box<dyn ProxyTaskEvent>,
+        _event: Box<dyn ProxyTaskEvent>,
     ) -> Result<reqwest::ClientBuilder, crate::errors::ProxyError> {
         Ok(builder)
     }
@@ -127,7 +127,7 @@ impl FaultInjector for LatencyInjector {
     async fn apply_on_request(
         &self,
         request: reqwest::Request,
-        event: Box<dyn ProxyTaskEvent>,
+        _event: Box<dyn ProxyTaskEvent>,
     ) -> Result<reqwest::Request, crate::errors::ProxyError> {
         Ok(request)
     }

@@ -107,7 +107,7 @@ pub async fn handle_connect(
     // Clone plugins to move into the spawned task
     let plugins = plugins.clone();
 
-    let _ = tokio::spawn(async move {
+    tokio::spawn(async move {
         let event = event.clone();
         let upstream_str = upstream.to_string();
 

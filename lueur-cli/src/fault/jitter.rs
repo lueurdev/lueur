@@ -80,7 +80,7 @@ impl FaultInjector for JitterInjector {
         &self,
         stream: Box<dyn Bidirectional + 'static>,
         direction: &Direction,
-        event: Box<dyn ProxyTaskEvent>,
+        _event: Box<dyn ProxyTaskEvent>,
     ) -> Box<dyn Bidirectional + 'static> {
         Box::new(JitterStream::new(stream, self.clone(), direction))
     }
@@ -88,7 +88,7 @@ impl FaultInjector for JitterInjector {
     async fn apply_on_response(
         &self,
         resp: http::Response<Vec<u8>>,
-        event: Box<dyn ProxyTaskEvent>,
+        _event: Box<dyn ProxyTaskEvent>,
     ) -> Result<http::Response<Vec<u8>>, crate::errors::ProxyError> {
         Ok(resp)
     }
@@ -96,7 +96,7 @@ impl FaultInjector for JitterInjector {
     async fn apply_on_request_builder(
         &self,
         builder: reqwest::ClientBuilder,
-        event: Box<dyn ProxyTaskEvent>,
+        _event: Box<dyn ProxyTaskEvent>,
     ) -> Result<reqwest::ClientBuilder, crate::errors::ProxyError> {
         Ok(builder)
     }
@@ -104,7 +104,7 @@ impl FaultInjector for JitterInjector {
     async fn apply_on_request(
         &self,
         request: reqwest::Request,
-        event: Box<dyn ProxyTaskEvent>,
+        _event: Box<dyn ProxyTaskEvent>,
     ) -> Result<reqwest::Request, crate::errors::ProxyError> {
         Ok(request)
     }

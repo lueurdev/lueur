@@ -29,42 +29,42 @@ pub trait ProxyPlugin: Send + Sync + std::fmt::Debug + fmt::Display {
     async fn prepare_client(
         &self,
         builder: ClientBuilder,
-        event: Box<dyn ProxyTaskEvent>,
+        _event: Box<dyn ProxyTaskEvent>,
     ) -> Result<ClientBuilder, ProxyError>;
 
     /// Processes and potentially modifies an outgoing Reqwest HTTP request.
     async fn process_request(
         &self,
         req: ReqwestRequest,
-        event: Box<dyn ProxyTaskEvent>,
+        _event: Box<dyn ProxyTaskEvent>,
     ) -> Result<ReqwestRequest, ProxyError>;
 
     /// Processes and potentially modifies an incoming Reqwest HTTP response.
     async fn process_response(
         &self,
         resp: http::Response<Vec<u8>>,
-        event: Box<dyn ProxyTaskEvent>,
+        _event: Box<dyn ProxyTaskEvent>,
     ) -> Result<http::Response<Vec<u8>>, ProxyError>;
 
     /// Processes and potentially modifies a CONNECT request.
     async fn process_connect_request(
         &self,
         req: ConnectRequest,
-        event: Box<dyn ProxyTaskEvent>,
+        _event: Box<dyn ProxyTaskEvent>,
     ) -> Result<ConnectRequest, ProxyError>;
 
     /// Processes the CONNECT response outcome.
     async fn process_connect_response(
         &self,
         success: bool,
-        event: Box<dyn ProxyTaskEvent>,
+        _event: Box<dyn ProxyTaskEvent>,
     ) -> Result<(), ProxyError>;
 
     async fn inject_tunnel_faults(
         &self,
         client_stream: Box<dyn Bidirectional + 'static>,
         server_stream: Box<dyn Bidirectional + 'static>,
-        event: Box<dyn ProxyTaskEvent>,
+        _event: Box<dyn ProxyTaskEvent>,
     ) -> Result<
         (Box<dyn Bidirectional + 'static>, Box<dyn Bidirectional + 'static>),
         ProxyError,

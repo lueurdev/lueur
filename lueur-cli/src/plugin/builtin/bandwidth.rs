@@ -47,7 +47,7 @@ impl ProxyPlugin for BandwidthPlugin {
     async fn process_connect_request(
         &self,
         _request: crate::types::ConnectRequest,
-        event: Box<dyn ProxyTaskEvent>,
+        _event: Box<dyn ProxyTaskEvent>,
     ) -> Result<crate::types::ConnectRequest, ProxyError> {
         // No modification to ConnectRequest
         Ok(_request)
@@ -56,7 +56,7 @@ impl ProxyPlugin for BandwidthPlugin {
     async fn process_connect_response(
         &self,
         _success: bool,
-        event: Box<dyn ProxyTaskEvent>,
+        _event: Box<dyn ProxyTaskEvent>,
     ) -> Result<(), ProxyError> {
         // No action on connect response
         Ok(())
@@ -65,7 +65,7 @@ impl ProxyPlugin for BandwidthPlugin {
     async fn prepare_client(
         &self,
         builder: reqwest::ClientBuilder,
-        event: Box<dyn ProxyTaskEvent>,
+        _event: Box<dyn ProxyTaskEvent>,
     ) -> Result<reqwest::ClientBuilder, ProxyError> {
         Ok(builder)
     }

@@ -35,24 +35,24 @@ pub trait FaultInjector: Send + Sync + std::fmt::Debug {
         &self,
         stream: Box<dyn Bidirectional + 'static>,
         direction: &Direction,
-        event: Box<dyn ProxyTaskEvent>,
+        _event: Box<dyn ProxyTaskEvent>,
     ) -> Box<dyn Bidirectional + 'static>;
 
     async fn apply_on_request_builder(
         &self,
         builder: ReqwestClientBuilder,
-        event: Box<dyn ProxyTaskEvent>,
+        _event: Box<dyn ProxyTaskEvent>,
     ) -> Result<ReqwestClientBuilder, ProxyError>;
 
     async fn apply_on_request(
         &self,
         request: ReqwestRequest,
-        event: Box<dyn ProxyTaskEvent>,
+        _event: Box<dyn ProxyTaskEvent>,
     ) -> Result<ReqwestRequest, ProxyError>;
 
     async fn apply_on_response(
         &self,
         resp: http::Response<Vec<u8>>,
-        event: Box<dyn ProxyTaskEvent>,
+        _event: Box<dyn ProxyTaskEvent>,
     ) -> Result<http::Response<Vec<u8>>, ProxyError>;
 }

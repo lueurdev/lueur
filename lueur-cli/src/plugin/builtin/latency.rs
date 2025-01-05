@@ -69,7 +69,7 @@ impl ProxyPlugin for LatencyFaultPlugin {
     async fn prepare_client(
         &self,
         builder: reqwest::ClientBuilder,
-        event: Box<dyn ProxyTaskEvent>,
+        _event: Box<dyn ProxyTaskEvent>,
     ) -> Result<reqwest::ClientBuilder, ProxyError> {
         Ok(builder)
     }
@@ -77,7 +77,7 @@ impl ProxyPlugin for LatencyFaultPlugin {
     async fn process_request(
         &self,
         req: ReqwestRequest,
-        event: Box<dyn ProxyTaskEvent>,
+        _event: Box<dyn ProxyTaskEvent>,
     ) -> Result<ReqwestRequest, ProxyError> {
         Ok(req)
     }
@@ -93,7 +93,7 @@ impl ProxyPlugin for LatencyFaultPlugin {
     async fn process_connect_request(
         &self,
         req: ConnectRequest,
-        event: Box<dyn ProxyTaskEvent>,
+        _event: Box<dyn ProxyTaskEvent>,
     ) -> Result<ConnectRequest, ProxyError> {
         Ok(req)
     }
@@ -101,7 +101,7 @@ impl ProxyPlugin for LatencyFaultPlugin {
     async fn process_connect_response(
         &self,
         _success: bool,
-        event: Box<dyn ProxyTaskEvent>,
+        _event: Box<dyn ProxyTaskEvent>,
     ) -> Result<(), ProxyError> {
         Ok(())
     }

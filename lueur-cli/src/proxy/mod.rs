@@ -324,7 +324,7 @@ fn parse_domain_with_scheme(scheme: &str, domain: &str) -> (String, String) {
     }
 }
 
-fn get_host(upstream_url: &String) -> String {
+fn get_host(upstream_url: &str) -> String {
     let url = Url::parse(upstream_url).unwrap();
     let host = url.host_str().ok_or("Missing host").unwrap().to_string();
     let port = url.port_or_known_default().unwrap();

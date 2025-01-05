@@ -72,12 +72,12 @@ pub fn determine_proxy_and_ebpf_config(
         .collect();
 
     // Initialize variables for proxy interface and eBPF interface.
-    let mut proxy_ifindex: Option<u32> = None;
+    #[warn(unused_assignments)]
     let mut ebpf_ifindex: Option<u32> = None;
 
     // Function to find interface by IP.
     fn find_interface_by_ip(
-        interfaces: &Vec<(String, Ipv4Addr)>,
+        interfaces: &[(String, Ipv4Addr)],
         ip: Ipv4Addr,
     ) -> Option<&(String, Ipv4Addr)> {
         interfaces.iter().find(|iface| iface.1 == ip)
@@ -85,14 +85,14 @@ pub fn determine_proxy_and_ebpf_config(
 
     // Function to find the first non-loopback interface.
     fn find_first_non_loopback(
-        interfaces: &Vec<(String, Ipv4Addr)>,
+        interfaces: &[(String, Ipv4Addr)],
     ) -> Option<&(String, Ipv4Addr)> {
         interfaces.iter().find(|iface| !iface.1.is_loopback())
     }
 
     // Function to find interface by name.
     fn find_interface_by_name<'a>(
-        interfaces: &'a Vec<(String, Ipv4Addr)>,
+        interfaces: &'a [(String, Ipv4Addr)],
         name: &str,
     ) -> Option<&'a (String, Ipv4Addr)> {
         interfaces.iter().find(|iface| iface.0 == name)
@@ -123,7 +123,7 @@ pub fn determine_proxy_and_ebpf_config(
         // Determine if proxy is loopback.
         let proxy_ip = match sock_proxy_ip {
             IpAddr::V4(ipv4) => ipv4,
-            IpAddr::V6(ipv6) => {
+            IpAddr::V6(_ipv6) => {
                 return Err("IPV6 addresses are not supported".to_string());
             }
         };
@@ -131,7 +131,7 @@ pub fn determine_proxy_and_ebpf_config(
         if proxy_ip.is_loopback() {
             // Proxy is on loopback; eBPF should be on a non-loopback interface.
             // Find eBPF interface by name.
-            let (ebpf_iface_name, ebpf_iface) =
+            let (ebpf_iface_name, _ebpf_iface) =
                 find_interface_by_name(&interfaces, ebpf_iface_name)
                     .ok_or_else(|| {
                         format!(
@@ -147,7 +147,7 @@ pub fn determine_proxy_and_ebpf_config(
             // Ensure proxy is not on the same interface.
             // Since proxy is on loopback, no conflict.
             // Set proxy to loopback.
-            let (proxy_iface_name, proxy_iface) =
+            let (proxy_iface_name, _proxy_iface) =
                 find_interface_by_ip(&interfaces, proxy_ip).ok_or_else(
                     || {
                         format!(
@@ -159,11 +159,10 @@ pub fn determine_proxy_and_ebpf_config(
 
             // Get proxy interface index.
             proxy_idx = get_ifindex(proxy_iface_name)?;
-            proxy_ifindex = None;
         } else {
             // Proxy is on a real NIC; ensure eBPF is not on the same NIC.
             // Find the interface that has the proxy IP.
-            let (proxy_iface_name, proxy_iface) =
+            let (proxy_iface_name, _proxy_iface) =
                 find_interface_by_ip(&interfaces, proxy_ip).ok_or_else(
                     || {
                         format!(
@@ -175,10 +174,9 @@ pub fn determine_proxy_and_ebpf_config(
 
             // Get proxy interface index.
             proxy_idx = get_ifindex(proxy_iface_name)?;
-            proxy_ifindex = Some(proxy_idx);
 
             // Now, ensure eBPF interface is different from proxy interface.
-            let ebpf_iface =
+            let _ebpf_iface =
                 find_interface_by_name(&interfaces, ebpf_iface_name)
                     .ok_or_else(|| {
                         format!(
@@ -237,7 +235,7 @@ pub fn determine_proxy_and_ebpf_config(
             // Determine if proxy is loopback.
             let proxy_ip = match sock_proxy_ip {
                 IpAddr::V4(ipv4) => ipv4,
-                IpAddr::V6(ipv6) => {
+                IpAddr::V6(_ipv6) => {
                     return Err("IPV6 addresses are not supported".to_string());
                 }
             };
@@ -246,13 +244,13 @@ pub fn determine_proxy_and_ebpf_config(
                 // Proxy is on loopback; eBPF should be on a non-loopback
                 // interface. Choose the first non-loopback
                 // interface.
-                let (non_loopback_iface_name, non_loopback_iface) = find_first_non_loopback(&interfaces)
+                let (non_loopback_iface_name, _non_loopback_iface) = find_first_non_loopback(&interfaces)
                     .ok_or_else(|| "No non-loopback network interfaces found for eBPF program".to_string())?;
 
                 let ebpf_idx = get_ifindex(non_loopback_iface_name)?;
                 ebpf_ifindex = Some(ebpf_idx);
 
-                let (proxy_iface_name, proxy_iface) = find_interface_by_ip(
+                let (proxy_iface_name, _proxy_iface) = find_interface_by_ip(
                     &interfaces,
                     proxy_ip,
                 )
@@ -278,7 +276,7 @@ pub fn determine_proxy_and_ebpf_config(
             } else {
                 // Proxy is on a real NIC; ensure eBPF is on a different NIC.
                 // Find the interface that has the proxy IP.
-                let (proxy_iface_name, proxy_iface) = find_interface_by_ip(
+                let (proxy_iface_name, _proxy_iface) = find_interface_by_ip(
                     &interfaces,
                     proxy_ip,
                 )
@@ -292,7 +290,7 @@ pub fn determine_proxy_and_ebpf_config(
                 let proxy_idx = get_ifindex(proxy_iface_name)?;
 
                 // Choose another non-loopback interface for eBPF.
-                let (ebpf_iface_name, ebpf_iface) = interfaces.iter().find(|iface| iface.0 != *proxy_iface_name && !iface.1.is_loopback())
+                let (ebpf_iface_name, _ebpf_iface) = interfaces.iter().find(|iface| iface.0 != *proxy_iface_name && !iface.1.is_loopback())
                     .ok_or_else(|| "No alternative non-loopback network interface found for eBPF program".to_string())?;
 
                 let ebpf_idx = get_ifindex(ebpf_iface_name)?;
@@ -328,7 +326,7 @@ pub fn determine_proxy_and_ebpf_config(
             let proxy_port = 8080;
 
             // Find the specified eBPF interface.
-            let ebpf_iface =
+            let _ebpf_iface =
                 find_interface_by_name(&interfaces, ebpf_iface_name)
                     .ok_or_else(|| {
                         format!(
@@ -340,7 +338,7 @@ pub fn determine_proxy_and_ebpf_config(
             let ebpf_idx = get_ifindex(ebpf_iface_name)?;
             ebpf_ifindex = Some(ebpf_idx);
 
-            let (proxy_iface_name, proxy_iface) =
+            let (proxy_iface_name, _proxy_iface) =
                 find_interface_by_ip(&interfaces, proxy_ip).ok_or_else(
                     || {
                         format!(
@@ -352,7 +350,6 @@ pub fn determine_proxy_and_ebpf_config(
 
             // Get proxy interface index.
             let proxy_idx = get_ifindex(proxy_iface_name)?;
-            proxy_ifindex = None;
 
             return Ok(ProxyEbpfConfig {
                 proxy_ip,
@@ -388,14 +385,14 @@ pub fn determine_proxy_and_ebpf_config(
             if proxy_ip.is_loopback() {
                 // Proxy is on loopback; eBPF should be on a non-loopback
                 // interface.
-                let (non_loopback_iface_name, non_loopback_iface) = find_first_non_loopback(&interfaces)
+                let (non_loopback_iface_name, _non_loopback_iface) = find_first_non_loopback(&interfaces)
                     .ok_or_else(|| "No non-loopback network interfaces found for eBPF program".to_string())?;
 
                 let ebpf_idx = get_ifindex(non_loopback_iface_name)?;
                 ebpf_ifindex = Some(ebpf_idx);
 
                 // Proxy is on loopback; no proxy_ifindex needed.
-                let (proxy_iface_name, proxy_iface) = find_interface_by_ip(
+                let (proxy_iface_name, _proxy_iface) = find_interface_by_ip(
                     &interfaces,
                     proxy_ip,
                 )
@@ -408,7 +405,6 @@ pub fn determine_proxy_and_ebpf_config(
 
                 // Get proxy interface index.
                 let proxy_idx = get_ifindex(proxy_iface_name)?;
-                proxy_ifindex = None;
 
                 return Ok(ProxyEbpfConfig {
                     proxy_ip,
@@ -422,7 +418,7 @@ pub fn determine_proxy_and_ebpf_config(
             } else {
                 // Proxy is on a real NIC; ensure eBPF is on a different NIC.
                 // Find the interface that has the proxy IP.
-                let (proxy_iface_name, proxy_iface) = find_interface_by_ip(
+                let (proxy_iface_name, _proxy_iface) = find_interface_by_ip(
                     &interfaces,
                     proxy_ip,
                 )
@@ -434,10 +430,9 @@ pub fn determine_proxy_and_ebpf_config(
                 })?;
 
                 let proxy_idx = get_ifindex(proxy_iface_name)?;
-                proxy_ifindex = Some(proxy_idx);
 
                 // Choose another non-loopback interface for eBPF.
-                let (ebpf_iface_name, ebpf_iface) = interfaces.iter().find(|iface| iface.0 != *proxy_iface_name && !iface.1.is_loopback())
+                let (ebpf_iface_name, _ebpf_iface) = interfaces.iter().find(|iface| iface.0 != *proxy_iface_name && !iface.1.is_loopback())
                     .ok_or_else(|| "No alternative non-loopback network interface found for eBPF program".to_string())?;
 
                 let ebpf_idx = get_ifindex(ebpf_iface_name)?;
@@ -471,7 +466,7 @@ pub fn determine_proxy_and_ebpf_config(
         let proxy_port = 8080;
 
         // Choose the first non-loopback interface for eBPF.
-        let (non_loopback_iface_name, non_loopback_iface) =
+        let (non_loopback_iface_name, _non_loopback_iface) =
             find_first_non_loopback(&interfaces).ok_or_else(|| {
                 "No non-loopback network interfaces found for eBPF program"
                     .to_string()
@@ -481,7 +476,7 @@ pub fn determine_proxy_and_ebpf_config(
         ebpf_ifindex = Some(ebpf_idx);
 
         // Proxy is on loopback; no proxy_ifindex needed.
-        let (proxy_iface_name, proxy_iface) =
+        let (proxy_iface_name, _proxy_iface) =
             find_interface_by_ip(&interfaces, proxy_ip).ok_or_else(|| {
                 format!(
                     "Proxy IP address '{}' not found on any interface",
@@ -491,7 +486,6 @@ pub fn determine_proxy_and_ebpf_config(
 
         // Get proxy interface index.
         let proxy_idx = get_ifindex(proxy_iface_name)?;
-        proxy_ifindex = None;
 
         return Ok(ProxyEbpfConfig {
             proxy_ip,
