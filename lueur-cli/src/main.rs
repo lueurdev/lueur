@@ -19,10 +19,13 @@ mod termui;
 mod types;
 
 use std::collections::HashMap;
+use std::fs::File;
+use std::io::Write;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::Duration;
+use std::time::Instant;
 
 use anyhow::Result;
 use aya::Ebpf;
@@ -36,6 +39,7 @@ use cli::ScenarioCommands;
 use colored::Colorize;
 use colorful::Color;
 use colorful::Colorful;
+use colorful::ExtraColorInterface;
 use config::ProxyConfig;
 use errors::ProxyError;
 use event::TaskManager;
@@ -47,15 +51,20 @@ use nic::ProxyEbpfConfig;
 use plugin::rpc::load_remote_plugins;
 use proxy::ProxyState;
 use proxy::run_proxy;
-use reporting::pretty_report;
+use reporting::OutputFormat;
 use reporting::Report;
+use reporting::ReportItemExpectation;
+use reporting::ReportItemExpectationDecision;
 use reporting::ReportItemMetrics;
 use reporting::ReportItemMetricsFaults;
 use reporting::ReportItemResult;
+use reporting::build_report_output;
+use reporting::pretty_report;
 use scenario::ScenarioEventManager;
 use scenario::ScenarioItemLifecycle;
 use scenario::ScenarioItemLifecycleFaults;
 use scenario::build_item_list;
+use scenario::count_scenario_items;
 use scenario::execute_item;
 use scenario::handle_scenario_events;
 use scenario::load_scenarios;
@@ -127,6 +136,8 @@ async fn main() -> Result<()> {
         },
         Commands::Scenario { scenario, common } => match scenario {
             ScenarioCommands::Run(config) => {
+                let start = Instant::now();
+
                 let proxy_address = common.proxy_address.clone();
                 let proxy_nic_config = nic::determine_proxy_and_ebpf_config(
                     proxy_address,
@@ -170,9 +181,11 @@ async fn main() -> Result<()> {
                 while let Some(candidate) = scenarios.next().await {
                     match candidate {
                         Ok(scenario) => {
+                            let mut progress_state = String::new();
+
                             let title = scenario.clone().title;
 
-                            let n = scenario.scenarios.len() as u64;
+                            let n = count_scenario_items(&scenario); //scenario.scenarios.len() as u64;
 
                             let pb = m.add(ProgressBar::new(n));
                             pb.enable_steady_tick(Duration::from_millis(80));
@@ -195,7 +208,6 @@ async fn main() -> Result<()> {
 
                             for item in scenario.scenarios.into_iter() {
                                 let items = build_item_list(item);
-                                pb.set_length(items.len() as u64);
 
                                 for i in items {
                                     let report = execute_item(
@@ -229,6 +241,28 @@ async fn main() -> Result<()> {
                                         None => None,
                                     };
 
+                                    match &report.expect {
+                                        Some(expect) => {
+                                            match expect {
+                                                ReportItemExpectation::Http { wanted: _, got } => {
+                                                    match got {
+                                                        Some(status) => {
+                                                            if status.decision == ReportItemExpectationDecision::Failure {
+                                                                progress_state = format!("{}{}", progress_state, "▮".to_string().red());
+                                                            } else if status.decision == ReportItemExpectationDecision::Success {
+                                                                progress_state = format!("{}{}", progress_state, "▮".to_string().green());
+                                                            } else {
+                                                                progress_state = format!("{}{}", progress_state, "▮".to_string().grey0());
+                                                            }
+                                                        },
+                                                        None => progress_state = format!("{}{}", progress_state, "▮".to_string().grey0())
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        None => progress_state = format!("{} {}", progress_state, "▮".to_string().grey0())
+                                    }
+
                                     results.push(ReportItemResult {
                                         target: report.target,
                                         expect: report.expect,
@@ -239,7 +273,11 @@ async fn main() -> Result<()> {
                                     });
 
                                     pb.inc(1);
-                                    pb.set_message(msg.clone());
+                                    pb.set_message(format!(
+                                        "{} {}",
+                                        msg.clone(),
+                                        progress_state
+                                    ));
                                 }
                             }
 
@@ -252,11 +290,43 @@ async fn main() -> Result<()> {
                 let final_report =
                     Report { plugins: Vec::new(), items: results };
 
-                let _ = final_report.save("report.yaml");
+                let report_output = build_report_output(&final_report).unwrap();
 
-                let text = pretty_report(final_report);
+                println!("\n");
+                println!(
+                    "{}\n",
+                    "===================== Summary ====================="
+                        .dimmed()
+                );
 
-                println!("{}", text.unwrap());
+                println!(
+                    "Tests run: {}, Tests failed: {}",
+                    report_output.summary.total_tests.to_string().bright_cyan(),
+                    report_output
+                        .summary
+                        .total_failures
+                        .to_string()
+                        .bright_red()
+                );
+                println!("Total time: {:.1}s", start.elapsed().as_secs_f64());
+
+                match get_output_format_result(config.report.as_str()) {
+                    Ok(fmt) => match pretty_report(&report_output, &fmt) {
+                        Ok(computed_report) => {
+                            let path = &config.report;
+                            let mut file = File::create(path).unwrap();
+                            let _ = write!(file, "{}", computed_report);
+                            println!(
+                                "\nReport saved as {}",
+                                config.report.bright_yellow()
+                            );
+                        }
+                        Err(e) => {
+                            tracing::error!("Failed to generated report: {}", e)
+                        }
+                    },
+                    Err(_) => tracing::error!("Unsupported report format"),
+                }
             }
         },
     }
@@ -459,4 +529,19 @@ fn initialize_stealth(
     };
 
     ebpf_guard
+}
+
+fn get_output_format_result(file_path: &str) -> Result<OutputFormat, String> {
+    Path::new(file_path)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .ok_or_else(|| "File extension is missing or invalid.".to_string())
+        .and_then(|ext_str| match ext_str.to_lowercase().as_str() {
+            "md" | "markdown" => Ok(OutputFormat::Markdown),
+            "txt" => Ok(OutputFormat::Text),
+            "html" | "htm" => Ok(OutputFormat::Html),
+            "json" => Ok(OutputFormat::Json),
+            "yaml" | "yml" => Ok(OutputFormat::Yaml),
+            other => Err(format!("Unrecognized file extension: '{}'", other)),
+        })
 }

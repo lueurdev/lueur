@@ -146,7 +146,12 @@ pub struct ScenarioConfig {
     pub scenario: String,
 
     /// Path to the output report file (JSON)
-    #[arg(short, long, default_value = "report.json")]
+    #[arg(
+        short,
+        long,
+        help = "File to save the generated report. The extension determines the format: .json, .yaml, .html and .md are supported.",
+        default_value = "report.json"
+    )]
     pub report: String,
 
     /// Listening address for the proxy server

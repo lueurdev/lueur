@@ -261,11 +261,33 @@ impl FaultConfiguration {
 
     pub fn fault_type(&self) -> String {
         match self {
-            FaultConfiguration::Latency { distribution: _, mean: _, stddev: _, min: _, max: _, shape: _, scale: _, direction: _ } => "latency".to_string(),
-            FaultConfiguration::PacketLoss { packet_loss_type: _, packet_loss_rate: _, direction: _ } => "packetloss".to_string(),
-            FaultConfiguration::Bandwidth { bandwidth_rate: _, direction: _ } => "bandwidth".to_string(),
-            FaultConfiguration::Jitter { jitter_amplitude: _, jitter_frequency: _, direction: _ } => "jitter".to_string(),
-            FaultConfiguration::Dns { dns_rate: _, direction: _ } => "dns".to_string(),
+            FaultConfiguration::Latency {
+                distribution: _,
+                mean: _,
+                stddev: _,
+                min: _,
+                max: _,
+                shape: _,
+                scale: _,
+                direction: _,
+            } => "latency".to_string(),
+            FaultConfiguration::PacketLoss {
+                packet_loss_type: _,
+                packet_loss_rate: _,
+                direction: _,
+            } => "packetloss".to_string(),
+            FaultConfiguration::Bandwidth {
+                bandwidth_rate: _,
+                direction: _,
+            } => "bandwidth".to_string(),
+            FaultConfiguration::Jitter {
+                jitter_amplitude: _,
+                jitter_frequency: _,
+                direction: _,
+            } => "jitter".to_string(),
+            FaultConfiguration::Dns { dns_rate: _, direction: _ } => {
+                "dns".to_string()
+            }
         }
     }
 }

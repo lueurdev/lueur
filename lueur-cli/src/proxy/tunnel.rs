@@ -196,8 +196,6 @@ pub async fn handle_connect(
                             );
                         }
                     };
-
-                    
                 }
                 Err(e) => {
                     error!(

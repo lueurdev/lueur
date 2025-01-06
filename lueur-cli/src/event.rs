@@ -394,8 +394,12 @@ impl FaultEvent {
             FaultEvent::Latency { delay: _ } => "latency".to_string(),
             FaultEvent::Dns { triggered: _ } => "dns".to_string(),
             FaultEvent::Bandwidth { bps: _ } => "bandwidth".to_string(),
-            FaultEvent::Jitter { amplitude: _, frequency: _ } => "jitter".to_string(),
-            FaultEvent::PacketLoss { loss_probability: _ } => "packetloss".to_string(),
+            FaultEvent::Jitter { amplitude: _, frequency: _ } => {
+                "jitter".to_string()
+            }
+            FaultEvent::PacketLoss { loss_probability: _ } => {
+                "packetloss".to_string()
+            }
         }
     }
 }

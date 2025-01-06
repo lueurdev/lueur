@@ -46,4 +46,18 @@ scenarios:
         max: 500
     expect:
       status: 200
-      response_time_under: 500
+      response_time_under: 1000
+  - call:
+      method: GET
+      url: http://localhost:7070/multi
+    context:
+      upstreams:
+        - https://postman-echo.com
+        - https://www.example.com
+      fault:
+        type: latency
+        mean: 300
+        max: 500
+    expect:
+      status: 200
+      response_time_under: 1000

@@ -221,6 +221,21 @@ pub async fn execute_item(
     report
 }
 
+pub fn count_scenario_items(scenario: &Scenario) -> u64 {
+    let mut count = 0;
+
+    for item in scenario.scenarios.iter() {
+        let strategy = item.context.strategy.clone();
+        if let Some(strategy) = strategy {
+            count += strategy.count;
+        } else {
+            count += 1;
+        }
+    }
+
+    count as u64
+}
+
 pub fn build_item_list(source: ScenarioItem) -> Vec<ScenarioItem> {
     let mut items = Vec::new();
 
@@ -269,7 +284,10 @@ pub fn build_item_list(source: ScenarioItem) -> Vec<ScenarioItem> {
                             jitter_frequency: _,
                             direction: _,
                         } => todo!(),
-                        FaultConfiguration::Dns { dns_rate: _, direction: _ } => {
+                        FaultConfiguration::Dns {
+                            dns_rate: _,
+                            direction: _,
+                        } => {
                             todo!()
                         }
                     }
@@ -592,11 +610,7 @@ pub struct ScenarioItemLifecycleFaults {
 
 impl ScenarioItemLifecycleFaults {
     pub fn new(url: String) -> Self {
-        Self {
-            url,
-            computed: None,
-            applied: Vec::new()
-        }
+        Self { url, computed: None, applied: Vec::new() }
     }
 }
 
@@ -722,12 +736,13 @@ where
 
 impl ScenarioItemLifecycleFaults {
     pub fn to_report_metrics_faults(&self) -> ReportItemMetricsFaults {
-        let computed = self.computed.as_ref().map(|(_url, event, direction)| {
-            ReportItemFault {
-                event: event.clone(),
-                direction: direction.clone(),
-            }
-        });
+        let computed =
+            self.computed.as_ref().map(|(_url, event, direction)| {
+                ReportItemFault {
+                    event: event.clone(),
+                    direction: direction.clone(),
+                }
+            });
 
         // Map the `applied` field
         let applied = if self.applied.is_empty() {
