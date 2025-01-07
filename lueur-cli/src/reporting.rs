@@ -74,7 +74,6 @@ pub enum ReportItemProtocol {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ReportItemMetricsFaults {
     pub url: String,
-    pub computed: Option<ReportItemFault>,
     pub applied: Option<Vec<ReportItemEvent>>,
 }
 
@@ -132,6 +131,47 @@ pub struct ReportItemResult {
 pub struct Report {
     pub plugins: Vec<RemotePluginInfo>,
     pub items: Vec<ReportItemResult>, // Scenario entries report
+}
+
+impl Report {
+    /// Saves the ScenarioReport to the specified file path in JSON or YAML
+    /// format based on file extension.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - The file path where the report should be saved.
+    ///
+    /// # Returns
+    ///
+    /// * `Result<(), ScenarioError>` - Returns `Ok(())` if successful, or a
+    ///   `ScenarioError` otherwise.
+    pub fn save(&self, path: &str) -> Result<(), ScenarioError> {
+        let file = File::create(path).map_err(|e| {
+            error!("Failed to create report file '{}': {}", path, e);
+            ScenarioError::IoError(e)
+        })?;
+        let writer = BufWriter::new(file);
+
+        if path.ends_with(".json") {
+            serde_json::to_writer_pretty(writer, self).map_err(|e| {
+                error!("Failed to serialize report to JSON: {}", e);
+                ScenarioError::ReportError(e.to_string())
+            })?;
+        } else if path.ends_with(".yaml") || path.ends_with(".yml") {
+            serde_yaml::to_writer(writer, self).map_err(|e| {
+                error!("Failed to serialize report to YAML: {}", e);
+                ScenarioError::ReportError(e.to_string())
+            })?;
+        } else {
+            let err_msg = "Unsupported report file format. Use .json or .yaml"
+                .to_string();
+            error!("{}", err_msg);
+            return Err(ScenarioError::ReportError(err_msg));
+        }
+
+        info!("Report successfully saved to '{}'.", path);
+        Ok(())
+    }
 }
 
 /// Represents the generated report structured for serialization.
@@ -958,11 +998,13 @@ fn analyze_fault_types(
         let primary_fault = item.fault.fault_type();
         *fault_counts.entry(primary_fault).or_insert(0) += 1;
 
+        /* 
         for fault_detail in &item.metrics.as_ref().unwrap().faults {
             let additional_fault =
                 fault_detail.computed.as_ref().unwrap().event.event_type();
             *fault_counts.entry(additional_fault).or_insert(0) += 1;
         }
+        */
     }
 
     let mut fault_analysis = Vec::new();

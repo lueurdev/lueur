@@ -55,7 +55,7 @@ pub async fn handle_displayable_events(
                                 task_map.insert(id, task_info);
                             }
                             TaskProgressEvent::IpResolved { id: _, ts: _, domain: _, time_taken: _ } => {},
-                            TaskProgressEvent::WithFault { id, ts: _, fault } => {
+                            TaskProgressEvent::WithFault { id, ts: _, fault, direction: _ } => {
                                 if let Some(task_info) = task_map.get_mut(&id) {
                                     task_info.fault = Some(fault.clone());
 
@@ -68,7 +68,6 @@ pub async fn handle_displayable_events(
                                 }
                             }
                             TaskProgressEvent::FaultApplied { id: _, ts: _, fault: _, direction: _ } => {}
-                            TaskProgressEvent::FaultComputed { id: _, ts: _, fault: _, direction: _ } => {}
                             TaskProgressEvent::ResponseReceived { id, ts: _, status_code } => {
                                 if let Some(task_info) = task_map.get_mut(&id) {
                                     let c = "Status:".dimmed();
@@ -193,7 +192,7 @@ fn fault_to_string(fault: &Option<FaultEvent>) -> String {
             FaultEvent::Latency { delay } => {
                 let c = "Fault:".dimmed();
                 let f = "latency".yellow();
-                format!("{} {} {}ms", c, f, delay.as_millis_f64())
+                format!("{} {} {}ms", c, f, delay.unwrap().as_millis_f64())
             }
             FaultEvent::Dns { triggered } => {
                 let c = "Fault:".dimmed();
@@ -202,7 +201,7 @@ fn fault_to_string(fault: &Option<FaultEvent>) -> String {
                     "{} {} {}",
                     c,
                     f,
-                    if *triggered {
+                    if triggered.unwrap() {
                         "triggered".to_string()
                     } else {
                         "not triggered".to_string()

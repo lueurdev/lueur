@@ -604,13 +604,12 @@ impl ScenarioItemLifecycle {
 #[derive(Clone, Debug)]
 pub struct ScenarioItemLifecycleFaults {
     pub url: String,
-    pub computed: Option<(String, FaultEvent, Direction)>,
     pub applied: Vec<(String, FaultEvent, Direction)>,
 }
 
 impl ScenarioItemLifecycleFaults {
     pub fn new(url: String) -> Self {
-        Self { url, computed: None, applied: Vec::new() }
+        Self { url, applied: Vec::new() }
     }
 }
 
@@ -654,21 +653,17 @@ pub async fn handle_scenario_events(
                             TaskProgressEvent::Started { id: _, ts: _, url } => {
                                 if let Some(ref mut item) = current { item.url = url; }
                             }
-                            TaskProgressEvent::WithFault { id: _, ts: _, fault } => {
+                            TaskProgressEvent::WithFault { id, ts: _, fault, direction } => {
                                 if let Some(ref mut item) = current {
                                     item.fault_declared = Some(fault.clone());
+
+                                    let f = ScenarioItemLifecycleFaults::new(item.url.clone());
+                                    item.faults.insert(id, f);
                                 }
                             }
                             TaskProgressEvent::IpResolved { id: _, ts: _, domain, time_taken } => {
                                 if let Some(ref mut item) = current {
                                     item.dns_timing.push(DnsTiming { host: domain, duration: time_taken, resolved: true });
-                                }
-                            },
-                            TaskProgressEvent::FaultComputed { id, ts: _, fault, direction } => {
-                                if let Some(ref mut item) = current {
-                                    let mut f = ScenarioItemLifecycleFaults::new(item.url.clone());
-                                    f.computed = Some((item.url.clone(), fault.clone(), direction));
-                                    item.faults.insert(id, f);
                                 }
                             },
                             TaskProgressEvent::FaultApplied { id, ts: _, fault, direction } => {
@@ -736,14 +731,6 @@ where
 
 impl ScenarioItemLifecycleFaults {
     pub fn to_report_metrics_faults(&self) -> ReportItemMetricsFaults {
-        let computed =
-            self.computed.as_ref().map(|(_url, event, direction)| {
-                ReportItemFault {
-                    event: event.clone(),
-                    direction: direction.clone(),
-                }
-            });
-
         // Map the `applied` field
         let applied = if self.applied.is_empty() {
             None
@@ -759,6 +746,6 @@ impl ScenarioItemLifecycleFaults {
             )
         };
 
-        ReportItemMetricsFaults { url: self.url.clone(), computed, applied }
+        ReportItemMetricsFaults { url: self.url.clone(), applied }
     }
 }

@@ -7,6 +7,8 @@ use std::task::Poll;
 use axum::async_trait;
 use axum::http;
 use pin_project::pin_project;
+use rand::rngs::SmallRng;
+use rand::SeedableRng;
 use rand_distr::Distribution;
 use rand_distr::Normal;
 use rand_distr::Pareto;
@@ -47,31 +49,58 @@ impl LatencyInjector {
         Self { options }
     }
 
-    fn get_delay(&self) -> Duration {
-        let mut rng = rand::thread_rng();
+    fn get_delay(&self, rng: &mut SmallRng) -> Duration {
         match &self.options.strategy {
             LatencyStrategy::Normal { mean, stddev } => {
                 let normal = Normal::new(*mean, *stddev).unwrap();
-                let sample = normal.sample(&mut rng).max(0.0);
-                Duration::from_millis(sample as u64)
+                let mut sample = normal.sample(rng);
+                while sample < 0.0 {
+                    sample = normal.sample(rng);
+                }
+
+                let millis = sample.floor() as u64;
+                let nanos = ((sample - millis as f64) * 1_000_000.0).round() as u32;
+                Duration::from_millis(millis) + Duration::from_nanos(nanos as u64)
             }
             LatencyStrategy::Pareto { shape, scale } => {
                 let pareto = Pareto::new(*shape, *scale).unwrap();
-                let sample = pareto.sample(&mut rng).max(0.0);
-                Duration::from_millis(sample as u64)
+                let mut sample = pareto.sample(rng);
+                while sample < 0.0 {
+                    sample = pareto.sample(rng);
+                }
+
+                let millis = sample.floor() as u64;
+                let nanos = ((sample - millis as f64) * 1_000_000.0).round() as u32;
+                Duration::from_millis(millis) + Duration::from_nanos(nanos as u64)
             }
             LatencyStrategy::ParetoNormal { shape, scale, mean, stddev } => {
                 let pareto = Pareto::new(*shape, *scale).unwrap();
-                let pareto_sample = pareto.sample(&mut rng).max(0.0);
+                let mut pareto_sample = pareto.sample(rng);
+                while pareto_sample < 0.0 {
+                    pareto_sample = pareto.sample(rng);
+                }
+
                 let normal = Normal::new(*mean, *stddev).unwrap();
-                let normal_sample = normal.sample(&mut rng).max(0.0);
+                let mut normal_sample = normal.sample(rng);
+                while normal_sample < 0.0 {
+                    normal_sample = normal.sample(rng);
+                }
+
                 let total = pareto_sample + normal_sample;
-                Duration::from_millis(total as u64)
+                let millis = total.floor() as u64;
+                let nanos = ((total - millis as f64) * 1_000_000.0).round() as u32;
+                Duration::from_millis(millis) + Duration::from_nanos(nanos as u64)
             }
             LatencyStrategy::Uniform { min, max } => {
                 let uniform = Uniform::new(*min, *max);
-                let sample = uniform.sample(&mut rng).max(0.0);
-                Duration::from_millis(sample as u64)
+                let mut sample = uniform.sample(rng);
+                while sample < 0.0 {
+                    sample = uniform.sample(rng);
+                }
+
+                let millis = sample.floor() as u64;
+                let nanos = ((sample - millis as f64) * 1_000_000.0).round() as u32;
+                Duration::from_millis(millis) + Duration::from_nanos(nanos as u64)
             }
         }
     }
@@ -92,12 +121,8 @@ impl FaultInjector for LatencyInjector {
         direction: &Direction,
         event: Box<dyn ProxyTaskEvent>,
     ) -> Box<dyn Bidirectional + 'static> {
-        let delay = self.get_delay();
-        tracing::debug!("Injecting latency {:?} on {}", delay, direction);
-        let _ = event.with_fault(FaultEvent::Latency { delay });
-        let _ =
-            event.on_computed(FaultEvent::Latency { delay }, direction.clone());
-        Box::new(LatencyStream::new(stream, delay, direction, Some(event)))
+        let _ = event.with_fault(FaultEvent::Latency { delay: None }, Direction::Ingress);
+        Box::new(LatencyStream::new(stream, self.clone(), direction, Some(event)))
     }
 
     async fn apply_on_response(
@@ -105,13 +130,12 @@ impl FaultInjector for LatencyInjector {
         resp: http::Response<Vec<u8>>,
         event: Box<dyn ProxyTaskEvent>,
     ) -> Result<http::Response<Vec<u8>>, crate::errors::ProxyError> {
-        let delay = self.get_delay();
+        let mut rng = SmallRng::from_entropy();
+        let delay = self.get_delay(&mut rng);
         tracing::debug!("Adding latency {:?}", delay);
-        let _ = event.with_fault(FaultEvent::Latency { delay });
-        let _ = event
-            .on_computed(FaultEvent::Latency { delay }, Direction::Ingress);
+        let _ = event.with_fault(FaultEvent::Latency { delay: None }, Direction::Ingress);
         let _ =
-            event.on_applied(FaultEvent::Latency { delay }, Direction::Ingress);
+            event.on_applied(FaultEvent::Latency { delay: Some(delay) }, Direction::Ingress);
         sleep(delay).await;
         Ok(resp)
     }
@@ -137,7 +161,10 @@ impl FaultInjector for LatencyInjector {
 pub struct LatencyStream {
     #[pin]
     stream: Box<dyn Bidirectional + 'static>,
-    pub delay: Duration,
+    #[pin]
+    injector: LatencyInjector,
+    #[pin]
+    rng: SmallRng,
     direction: Direction,
     event: Option<Box<dyn ProxyTaskEvent>>,
     read_sleep: Option<Pin<Box<Sleep>>>,
@@ -147,14 +174,15 @@ pub struct LatencyStream {
 impl LatencyStream {
     fn new(
         stream: Box<dyn Bidirectional + 'static>,
-        delay: Duration,
+        injector: LatencyInjector,
         direction: &Direction,
         event: Option<Box<dyn ProxyTaskEvent>>,
     ) -> Self {
         Self {
             stream,
-            delay,
+            injector,
             event,
+            rng: SmallRng::from_entropy(),
             read_sleep: None,
             write_sleep: None,
             direction: direction.clone(),
@@ -171,12 +199,14 @@ impl AsyncRead for LatencyStream {
         let mut this = self.project();
 
         if this.direction.is_ingress() {
-            let delay = *this.delay;
+            let injector = this.injector;
+            let mut rng = this.rng;
+            let delay = injector.get_delay(&mut rng);
             if this.read_sleep.is_none() {
                 let event = this.event;
                 if event.is_some() {
                     let _ = event.clone().unwrap().on_applied(
-                        FaultEvent::Latency { delay },
+                        FaultEvent::Latency { delay: Some(delay) },
                         Direction::Ingress,
                     );
                 }
@@ -209,12 +239,15 @@ impl AsyncWrite for LatencyStream {
         let mut this = self.project();
 
         if this.direction.is_egress() {
-            let delay = *this.delay;
+            let injector = this.injector;
+            let mut rng = this.rng;
+            let delay = injector.get_delay(&mut rng);
+
             if this.write_sleep.is_none() {
                 let event = this.event;
                 if event.is_some() {
                     let _ = event.clone().unwrap().on_applied(
-                        FaultEvent::Latency { delay },
+                        FaultEvent::Latency { delay: Some(delay) },
                         Direction::Egress,
                     );
                 }

@@ -26,18 +26,13 @@ pub enum TaskProgressEvent {
         id: TaskId,
         ts: Instant,
         fault: FaultEvent,
+        direction: Direction,
     },
     IpResolved {
         id: TaskId,
         ts: Instant,
         domain: String,
         time_taken: f64,
-    },
-    FaultComputed {
-        id: TaskId,
-        ts: Instant,
-        fault: FaultEvent,
-        direction: Direction,
     },
     FaultApplied {
         id: TaskId,
@@ -77,6 +72,7 @@ pub trait ProxyTaskEvent: Send + Sync + std::fmt::Debug {
     fn with_fault(
         &self,
         fault: FaultEvent,
+        direction: Direction,
     ) -> Result<(), SendError<TaskProgressEvent>>;
 
     fn on_resolved(
@@ -90,12 +86,6 @@ pub trait ProxyTaskEvent: Send + Sync + std::fmt::Debug {
         time_taken: Duration,
         from_downstream_length: u64,
         from_upstream_length: u64,
-    ) -> Result<(), SendError<TaskProgressEvent>>;
-
-    fn on_computed(
-        &self,
-        fault: FaultEvent,
-        direction: Direction,
     ) -> Result<(), SendError<TaskProgressEvent>>;
 
     fn on_applied(
@@ -139,11 +129,13 @@ impl ProxyTaskEvent for FaultTaskEvent {
     fn with_fault(
         &self,
         fault: FaultEvent,
+        direction: Direction,
     ) -> Result<(), SendError<TaskProgressEvent>> {
         let event: TaskProgressEvent = TaskProgressEvent::WithFault {
             id: self.id,
             ts: Instant::now(),
             fault,
+            direction
         };
         let sender = self.sender.clone();
         let _ = sender.send(event);
@@ -178,22 +170,6 @@ impl ProxyTaskEvent for FaultTaskEvent {
             time_taken,
             from_downstream_length,
             from_upstream_length,
-        };
-        let sender = self.sender.clone();
-        let _ = sender.send(event);
-        Ok(())
-    }
-
-    fn on_computed(
-        &self,
-        fault: FaultEvent,
-        direction: Direction,
-    ) -> Result<(), SendError<TaskProgressEvent>> {
-        let event: TaskProgressEvent = TaskProgressEvent::FaultComputed {
-            id: self.id,
-            ts: Instant::now(),
-            fault,
-            direction,
         };
         let sender = self.sender.clone();
         let _ = sender.send(event);
@@ -253,6 +229,7 @@ impl ProxyTaskEvent for PassthroughTaskEvent {
     fn with_fault(
         &self,
         _fault: FaultEvent,
+        _direction: Direction,
     ) -> Result<(), SendError<TaskProgressEvent>> {
         Ok(())
     }
@@ -270,14 +247,6 @@ impl ProxyTaskEvent for PassthroughTaskEvent {
         _time_taken: Duration,
         _from_downstream_length: u64,
         _from_upstream_length: u64,
-    ) -> Result<(), SendError<TaskProgressEvent>> {
-        Ok(())
-    }
-
-    fn on_computed(
-        &self,
-        _fault: FaultEvent,
-        _direction: Direction,
     ) -> Result<(), SendError<TaskProgressEvent>> {
         Ok(())
     }
@@ -349,43 +318,22 @@ impl TaskManager {
 pub enum FaultEvent {
     Latency {
         #[serde(serialize_with = "serialize_duration_as_millis_f64")]
-        delay: Duration,
+        delay: Option<Duration>,
     },
     Dns {
-        triggered: bool,
+        triggered: Option<bool>,
     },
     Bandwidth {
-        bps: usize,
+        bps: Option<usize>,
     },
     Jitter {
         #[serde(serialize_with = "serialize_duration_as_millis_f64")]
-        amplitude: Duration,
-        frequency: f64,
+        amplitude: Option<Duration>,
+        frequency: Option<f64>,
     },
     PacketLoss {
-        loss_probability: f64,
+        loss_probability: Option<f64>,
     },
-}
-
-impl fmt::Display for FaultEvent {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            FaultEvent::Latency { delay } => {
-                write!(f, "{}", delay.as_millis_f64())?;
-                Ok(())
-            }
-            FaultEvent::Dns { triggered } => {
-                match triggered {
-                    true => write!(f, "true")?,
-                    false => write!(f, "false")?,
-                };
-                Ok(())
-            }
-            FaultEvent::Bandwidth { bps: _ } => todo!(),
-            FaultEvent::Jitter { amplitude: _, frequency: _ } => todo!(),
-            FaultEvent::PacketLoss { loss_probability: _ } => todo!(),
-        }
-    }
 }
 
 impl FaultEvent {
@@ -407,12 +355,15 @@ impl FaultEvent {
 /// Helper function to serialize `Duration` as `f64` milliseconds using
 /// `as_millis_f64()`.
 fn serialize_duration_as_millis_f64<S>(
-    duration: &Duration,
+    duration: &Option<Duration>,
     serializer: S,
 ) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
 {
     // Utilize the new `as_millis_f64` method
-    serializer.serialize_f64(duration.as_millis_f64())
+    match duration {
+        Some(d) => serializer.serialize_f64(d.as_millis_f64()),
+        None => serializer.serialize_none()
+    }
 }

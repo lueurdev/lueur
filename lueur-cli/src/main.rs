@@ -290,6 +290,8 @@ async fn main() -> Result<()> {
                 let final_report =
                     Report { plugins: Vec::new(), items: results };
 
+                let _ = final_report.save("results.json").unwrap();
+
                 let report_output = build_report_output(&final_report).unwrap();
 
                 println!("\n");
