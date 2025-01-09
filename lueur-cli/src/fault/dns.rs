@@ -71,9 +71,10 @@ impl Resolve for FaultyResolverInjector {
 
             if apply_fault {
                 let _ = match self_clone.event {
-                    Some(event) => {
-                        event.with_fault(FaultEvent::Dns { triggered: Some(true) }, Direction::Egress)
-                    }
+                    Some(event) => event.with_fault(
+                        FaultEvent::Dns { triggered: Some(true) },
+                        Direction::Egress,
+                    ),
                     None => Ok(()),
                 };
                 let io_error = std::io::Error::new(
@@ -84,9 +85,10 @@ impl Resolve for FaultyResolverInjector {
             }
 
             let _ = match self_clone.event {
-                Some(event) => {
-                    event.with_fault(FaultEvent::Dns { triggered: Some(false) }, Direction::Egress)
-                }
+                Some(event) => event.with_fault(
+                    FaultEvent::Dns { triggered: Some(false) },
+                    Direction::Egress,
+                ),
                 None => Ok(()),
             };
 

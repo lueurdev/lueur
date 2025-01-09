@@ -168,10 +168,11 @@ async fn multi() -> Json<Pong> {
             let response = client.get(url).send().await?;
             let status = response.status();
             let body = response.text().await?;
-            Ok::<(String, u16, usize), reqwest::Error>((
+            Ok::<(String, u16, usize, String), reqwest::Error>((
                 url.to_string(),
                 status.as_u16(),
                 body.len(),
+                body,
             ))
         }
     });
@@ -182,7 +183,7 @@ async fn multi() -> Json<Pong> {
     // Process the results
     for result in results {
         match result {
-            Ok((url, status, length)) => {
+            Ok((url, status, length, body)) => {
                 println!(
                     "URL: {}\nStatus: {}\nResponse Length: {}\n",
                     url, status, length

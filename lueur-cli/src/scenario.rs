@@ -277,6 +277,7 @@ pub fn build_item_list(source: ScenarioItem) -> Vec<ScenarioItem> {
                         } => todo!(),
                         FaultConfiguration::Bandwidth {
                             bandwidth_rate: _,
+                            bandwidth_unit: _,
                             direction: _,
                         } => todo!(),
                         FaultConfiguration::Jitter {
@@ -641,7 +642,7 @@ pub async fn handle_scenario_events(
                         break;
                     }
                     Err(broadcast::error::RecvError::Lagged(count)) => {
-                        eprintln!("Missed {} messages", count);
+                        tracing::warn!("Missed {} scenario messages", count);
                     }
                 }
             }

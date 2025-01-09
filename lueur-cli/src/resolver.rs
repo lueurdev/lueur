@@ -52,7 +52,7 @@ impl Resolve for TimingResolver {
             let resolver = self_clone.resolver.read().await;
             let start_time = Instant::now();
             let lookup = resolver.lookup_ip(host).await?;
-            let duration = start_time.elapsed().as_secs_f64();
+            let duration = start_time.elapsed().as_millis_f64();
             let domain = host.to_string();
 
             {

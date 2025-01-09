@@ -135,15 +135,40 @@ impl fmt::Display for PacketLossType {
     Deserialize,
 )]
 pub enum BandwidthUnit {
-    Bps,
-    Kbps,
-    Mbps,
-    Gbps,
+    Bps, // Bytes per second
+    #[clap(name = "kbps")]
+    KBps, // Kilobytes per second
+    #[clap(name = "mbps")]
+    MBps, // Megabytes per second
+    #[clap(name = "gbps")]
+    GBps, // Gigabytes per second
 }
 
 impl Default for BandwidthUnit {
     fn default() -> Self {
         Self::Bps // Default rate limit type
+    }
+}
+
+impl fmt::Display for BandwidthUnit {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            BandwidthUnit::Bps => write!(f, "Bps"),
+            BandwidthUnit::KBps => write!(f, "KBps"),
+            BandwidthUnit::MBps => write!(f, "MBps"),
+            BandwidthUnit::GBps => write!(f, "GBps"),
+        }
+    }
+}
+
+impl BandwidthUnit {
+    pub fn to_bytes_per_second(&self, rate: usize) -> usize {
+        match self {
+            BandwidthUnit::Bps => rate,
+            BandwidthUnit::KBps => rate * 1_000,
+            BandwidthUnit::MBps => rate * 1_000_000,
+            BandwidthUnit::GBps => rate * 1_000_000_000,
+        }
     }
 }
 
@@ -168,6 +193,7 @@ pub enum FaultConfiguration {
     },
     Bandwidth {
         bandwidth_rate: u32,
+        bandwidth_unit: BandwidthUnit,
         direction: String,
     },
     Jitter {
@@ -184,10 +210,15 @@ pub enum FaultConfiguration {
 impl FaultConfiguration {
     pub fn build(&self) -> Result<FaultConfig, ScenarioError> {
         match self {
-            FaultConfiguration::Bandwidth { bandwidth_rate, direction } => {
+            FaultConfiguration::Bandwidth {
+                bandwidth_rate,
+                bandwidth_unit,
+                direction,
+            } => {
                 let settings = config::BandwidthSettings {
                     direction: Direction::from_str(direction).unwrap(),
                     bandwidth_rate: *bandwidth_rate,
+                    bandwidth_unit: bandwidth_unit.clone(),
                 };
 
                 Ok(FaultConfig::Bandwidth(settings))
@@ -278,6 +309,7 @@ impl FaultConfiguration {
             } => "packetloss".to_string(),
             FaultConfiguration::Bandwidth {
                 bandwidth_rate: _,
+                bandwidth_unit: _,
                 direction: _,
             } => "bandwidth".to_string(),
             FaultConfiguration::Jitter {
@@ -359,11 +391,17 @@ impl fmt::Display for FaultConfiguration {
                     direction
                 )
             }
-            FaultConfiguration::Bandwidth { bandwidth_rate, direction } => {
+            FaultConfiguration::Bandwidth {
+                bandwidth_rate,
+                bandwidth_unit,
+                direction,
+            } => {
                 write!(
                     f,
-                    "Bandwidth Fault - Rate: {} kbps, Direction: {}",
-                    bandwidth_rate, direction
+                    "Bandwidth Fault - Rate: {} {}, Direction: {}",
+                    bandwidth_rate,
+                    bandwidth_unit.to_string(),
+                    direction
                 )
             }
             FaultConfiguration::Jitter {

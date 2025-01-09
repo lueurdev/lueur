@@ -9,6 +9,7 @@ use crate::cli::CliJitterConfig;
 use crate::cli::CliLatencyConfig;
 use crate::cli::CliPacketLossConfig;
 use crate::errors::ProxyError;
+use crate::types::BandwidthUnit;
 use crate::types::Direction;
 use crate::types::LatencyDistribution;
 use crate::types::PacketLossType;
@@ -38,7 +39,8 @@ pub struct PacketLossSettings {
 #[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq)]
 pub struct BandwidthSettings {
     pub direction: Direction,
-    pub bandwidth_rate: u32, // in kbps
+    pub bandwidth_rate: u32, // in bits per second
+    pub bandwidth_unit: BandwidthUnit,
 }
 
 /// Internal Configuration for Jitter Fault
@@ -190,8 +192,11 @@ impl ProxyConfig {
         config: CliBandwidthConfig,
         direction: Direction,
     ) -> Result<Self, String> {
-        let bandwidth_settings =
-            BandwidthSettings { bandwidth_rate: config.rate, direction };
+        let bandwidth_settings = BandwidthSettings {
+            bandwidth_rate: config.rate,
+            bandwidth_unit: config.unit,
+            direction,
+        };
         let fault_config = FaultConfig::Bandwidth(bandwidth_settings);
         Ok(Self { fault: fault_config })
     }

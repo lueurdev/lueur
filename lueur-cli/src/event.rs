@@ -1,3 +1,4 @@
+use std::error::Error;
 use std::fmt;
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
@@ -99,6 +100,11 @@ pub trait ProxyTaskEvent: Send + Sync + std::fmt::Debug {
         status_code: u16,
     ) -> Result<(), SendError<TaskProgressEvent>>;
 
+    fn on_error(
+        &self,
+        error: Box<dyn Error>,
+    ) -> Result<(), SendError<TaskProgressEvent>>;
+
     fn clone_me(&self) -> Box<dyn ProxyTaskEvent>;
 }
 
@@ -135,7 +141,7 @@ impl ProxyTaskEvent for FaultTaskEvent {
             id: self.id,
             ts: Instant::now(),
             fault,
-            direction
+            direction,
         };
         let sender = self.sender.clone();
         let _ = sender.send(event);
@@ -189,7 +195,6 @@ impl ProxyTaskEvent for FaultTaskEvent {
         };
         let sender = self.sender.clone();
         let _ = sender.send(event);
-        tracing::info!("on applied sent");
         Ok(())
     }
 
@@ -209,6 +214,20 @@ impl ProxyTaskEvent for FaultTaskEvent {
 
     fn clone_me(&self) -> Box<dyn ProxyTaskEvent> {
         Box::new(self.clone())
+    }
+
+    fn on_error(
+        &self,
+        error: Box<dyn Error>,
+    ) -> Result<(), SendError<TaskProgressEvent>> {
+        let event: TaskProgressEvent = TaskProgressEvent::Error {
+            id: self.id,
+            ts: Instant::now(),
+            error: error.to_string(),
+        };
+        let sender = self.sender.clone();
+        let _ = sender.send(event);
+        Ok(())
     }
 }
 
@@ -268,6 +287,14 @@ impl ProxyTaskEvent for PassthroughTaskEvent {
 
     fn clone_me(&self) -> Box<dyn ProxyTaskEvent> {
         Box::new(self.clone())
+    }
+
+    fn on_error(
+        &self,
+        error: Box<dyn Error>,
+    ) -> Result<(), SendError<TaskProgressEvent>> {
+        tracing::error!("Tracing error in bypass mode: {}", error);
+        Ok(())
     }
 }
 
@@ -364,6 +391,6 @@ where
     // Utilize the new `as_millis_f64` method
     match duration {
         Some(d) => serializer.serialize_f64(d.as_millis_f64()),
-        None => serializer.serialize_none()
+        None => serializer.serialize_none(),
     }
 }

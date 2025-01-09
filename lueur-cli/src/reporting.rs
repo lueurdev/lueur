@@ -998,7 +998,7 @@ fn analyze_fault_types(
         let primary_fault = item.fault.fault_type();
         *fault_counts.entry(primary_fault).or_insert(0) += 1;
 
-        /* 
+        /*
         for fault_detail in &item.metrics.as_ref().unwrap().faults {
             let additional_fault =
                 fault_detail.computed.as_ref().unwrap().event.event_type();

@@ -31,8 +31,9 @@ impl fmt::Display for BandwidthPlugin {
 impl BandwidthPlugin {
     pub fn new_from_settings(settings: BandwidthSettings) -> Self {
         let options = BandwidthOptions {
-            strategy: BandwidthStrategy::Default {
-                bps: settings.bandwidth_rate as usize,
+            strategy: BandwidthStrategy::Single {
+                rate: settings.bandwidth_rate as usize,
+                unit: settings.bandwidth_unit,
             },
         };
         let injector = Arc::new(BandwidthLimitFaultInjector::new(options));

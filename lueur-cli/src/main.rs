@@ -84,7 +84,7 @@ async fn main() -> Result<()> {
 
     let (shutdown_tx, shutdown_rx) = broadcast::channel::<()>(1); // Capacity of 1
 
-    let (task_manager, receiver) = TaskManager::new(100);
+    let (task_manager, receiver) = TaskManager::new(1000);
 
     match &cli.command {
         Commands::Run { run, common } => {
@@ -167,7 +167,7 @@ async fn main() -> Result<()> {
                     Arc::new(Mutex::new(Vec::<ScenarioItemLifecycle>::new()));
 
                 let (event_manager, scenario_event_receiver) =
-                    ScenarioEventManager::new(100);
+                    ScenarioEventManager::new(500);
 
                 let _scenario_event_progress_guard =
                     tokio::spawn(handle_scenario_events(

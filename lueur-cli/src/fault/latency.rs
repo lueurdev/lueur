@@ -7,8 +7,8 @@ use std::task::Poll;
 use axum::async_trait;
 use axum::http;
 use pin_project::pin_project;
-use rand::rngs::SmallRng;
 use rand::SeedableRng;
+use rand::rngs::SmallRng;
 use rand_distr::Distribution;
 use rand_distr::Normal;
 use rand_distr::Pareto;
@@ -59,8 +59,10 @@ impl LatencyInjector {
                 }
 
                 let millis = sample.floor() as u64;
-                let nanos = ((sample - millis as f64) * 1_000_000.0).round() as u32;
-                Duration::from_millis(millis) + Duration::from_nanos(nanos as u64)
+                let nanos =
+                    ((sample - millis as f64) * 1_000_000.0).round() as u32;
+                Duration::from_millis(millis)
+                    + Duration::from_nanos(nanos as u64)
             }
             LatencyStrategy::Pareto { shape, scale } => {
                 let pareto = Pareto::new(*shape, *scale).unwrap();
@@ -70,8 +72,10 @@ impl LatencyInjector {
                 }
 
                 let millis = sample.floor() as u64;
-                let nanos = ((sample - millis as f64) * 1_000_000.0).round() as u32;
-                Duration::from_millis(millis) + Duration::from_nanos(nanos as u64)
+                let nanos =
+                    ((sample - millis as f64) * 1_000_000.0).round() as u32;
+                Duration::from_millis(millis)
+                    + Duration::from_nanos(nanos as u64)
             }
             LatencyStrategy::ParetoNormal { shape, scale, mean, stddev } => {
                 let pareto = Pareto::new(*shape, *scale).unwrap();
@@ -88,8 +92,10 @@ impl LatencyInjector {
 
                 let total = pareto_sample + normal_sample;
                 let millis = total.floor() as u64;
-                let nanos = ((total - millis as f64) * 1_000_000.0).round() as u32;
-                Duration::from_millis(millis) + Duration::from_nanos(nanos as u64)
+                let nanos =
+                    ((total - millis as f64) * 1_000_000.0).round() as u32;
+                Duration::from_millis(millis)
+                    + Duration::from_nanos(nanos as u64)
             }
             LatencyStrategy::Uniform { min, max } => {
                 let uniform = Uniform::new(*min, *max);
@@ -99,8 +105,10 @@ impl LatencyInjector {
                 }
 
                 let millis = sample.floor() as u64;
-                let nanos = ((sample - millis as f64) * 1_000_000.0).round() as u32;
-                Duration::from_millis(millis) + Duration::from_nanos(nanos as u64)
+                let nanos =
+                    ((sample - millis as f64) * 1_000_000.0).round() as u32;
+                Duration::from_millis(millis)
+                    + Duration::from_nanos(nanos as u64)
             }
         }
     }
@@ -121,8 +129,14 @@ impl FaultInjector for LatencyInjector {
         direction: &Direction,
         event: Box<dyn ProxyTaskEvent>,
     ) -> Box<dyn Bidirectional + 'static> {
-        let _ = event.with_fault(FaultEvent::Latency { delay: None }, Direction::Ingress);
-        Box::new(LatencyStream::new(stream, self.clone(), direction, Some(event)))
+        let _ = event
+            .with_fault(FaultEvent::Latency { delay: None }, direction.clone());
+        Box::new(LatencyStream::new(
+            stream,
+            self.clone(),
+            direction,
+            Some(event),
+        ))
     }
 
     async fn apply_on_response(
@@ -133,9 +147,14 @@ impl FaultInjector for LatencyInjector {
         let mut rng = SmallRng::from_entropy();
         let delay = self.get_delay(&mut rng);
         tracing::debug!("Adding latency {:?}", delay);
-        let _ = event.with_fault(FaultEvent::Latency { delay: None }, Direction::Ingress);
-        let _ =
-            event.on_applied(FaultEvent::Latency { delay: Some(delay) }, Direction::Ingress);
+        let _ = event.with_fault(
+            FaultEvent::Latency { delay: None },
+            Direction::Ingress,
+        );
+        let _ = event.on_applied(
+            FaultEvent::Latency { delay: Some(delay) },
+            Direction::Ingress,
+        );
         sleep(delay).await;
         Ok(resp)
     }

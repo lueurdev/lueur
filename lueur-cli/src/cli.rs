@@ -352,7 +352,7 @@ pub struct CliBandwidthConfig {
         long,
         default_value_t = BandwidthUnit::Bps,
         value_enum,
-        help = "Unit for the bandwidth rate (options: Bps, Kbps, Mbps, Gbps)."
+        help = "Unit for the bandwidth rate (options: Bps, KBps, MBps, GBps)."
     )]
     pub unit: BandwidthUnit,
 }
