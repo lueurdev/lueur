@@ -34,18 +34,8 @@ impl fmt::Display for PacketLossFaultPlugin {
 
 impl PacketLossFaultPlugin {
     pub fn new_from_settings(settings: PacketLossSettings) -> Self {
-        let packet_loss_options = PacketLossOptions {
-            strategy: match settings.loss_type {
-                PacketLossType::Bernoulli => PacketLossStrategy::Bernoulli {
-                    loss_probability: settings.packet_loss_rate,
-                },
-                PacketLossType::GilbertElliott => {
-                    PacketLossStrategy::GilbertElliott {
-                        loss_probability: settings.packet_loss_rate,
-                    }
-                }
-            },
-        };
+        let packet_loss_options =
+            PacketLossOptions { strategy: PacketLossStrategy::default() };
         let injector = Arc::new(PacketLossInjector::new(packet_loss_options));
         Self { injector, direction: settings.direction }
     }
@@ -64,17 +54,23 @@ impl ProxyPlugin for PacketLossFaultPlugin {
     async fn process_request(
         &self,
         req: ReqwestRequest,
-        _event: Box<dyn ProxyTaskEvent>,
+        event: Box<dyn ProxyTaskEvent>,
     ) -> Result<ReqwestRequest, ProxyError> {
-        Ok(req)
+        match self.direction.is_ingress() {
+            true => self.injector.apply_on_request(req, event).await,
+            false => Ok(req),
+        }
     }
 
     async fn process_response(
         &self,
         resp: http::Response<Vec<u8>>,
-        _event: Box<dyn ProxyTaskEvent>,
+        event: Box<dyn ProxyTaskEvent>,
     ) -> Result<http::Response<Vec<u8>>, ProxyError> {
-        Ok(resp)
+        match self.direction.is_egress() {
+            true => self.injector.apply_on_response(resp, event).await,
+            false => Ok(resp),
+        }
     }
 
     async fn process_connect_request(

@@ -358,9 +358,7 @@ pub enum FaultEvent {
         amplitude: Option<Duration>,
         frequency: Option<f64>,
     },
-    PacketLoss {
-        loss_probability: Option<f64>,
-    },
+    PacketLoss {},
 }
 
 impl FaultEvent {
@@ -372,9 +370,7 @@ impl FaultEvent {
             FaultEvent::Jitter { amplitude: _, frequency: _ } => {
                 "jitter".to_string()
             }
-            FaultEvent::PacketLoss { loss_probability: _ } => {
-                "packetloss".to_string()
-            }
+            FaultEvent::PacketLoss {} => "packetloss".to_string(),
         }
     }
 }

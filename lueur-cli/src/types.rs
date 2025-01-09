@@ -93,21 +93,19 @@ impl fmt::Display for Direction {
 
 #[derive(clap::ValueEnum, Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub enum PacketLossType {
-    Bernoulli,
-    GilbertElliott,
+    MultiStateMarkov,
 }
 
 impl Default for PacketLossType {
     fn default() -> Self {
-        Self::Bernoulli // Default packet loss type
+        Self::MultiStateMarkov // Default packet loss type
     }
 }
 
 impl PacketLossType {
     pub fn from_str(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
-            "bernouilli" => Some(PacketLossType::Bernoulli),
-            "gilbert-elliott" => Some(PacketLossType::GilbertElliott),
+            "multistatemarkov" => Some(PacketLossType::MultiStateMarkov),
             _ => None,
         }
     }
@@ -116,8 +114,7 @@ impl PacketLossType {
 impl fmt::Display for PacketLossType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            PacketLossType::Bernoulli => write!(f, "bernoulli"),
-            PacketLossType::GilbertElliott => write!(f, "gilbert-elliott"),
+            PacketLossType::MultiStateMarkov => write!(f, "multistatemarkov"),
         }
     }
 }
@@ -258,9 +255,6 @@ impl FaultConfiguration {
                 direction,
             } => {
                 let settings = config::PacketLossSettings {
-                    loss_type: PacketLossType::from_str(packet_loss_type)
-                        .unwrap(),
-                    packet_loss_rate: *packet_loss_rate,
                     direction: Direction::from_str(direction).unwrap(),
                 };
 

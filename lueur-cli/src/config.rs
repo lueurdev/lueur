@@ -31,8 +31,6 @@ pub struct LatencySettings {
 #[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq)]
 pub struct PacketLossSettings {
     pub direction: Direction,
-    pub loss_type: PacketLossType,
-    pub packet_loss_rate: f64,
 }
 
 /// Internal Configuration for Bandwidth Throttling Fault
@@ -117,13 +115,7 @@ impl ProxyConfig {
                     ));
                 }
             }
-            FaultConfig::PacketLoss(config) => {
-                if !(0.0..=1.0).contains(&config.packet_loss_rate) {
-                    return Err(ProxyError::InvalidConfiguration(
-                        "Packet loss rate must be between 0.0 and 1.0.".into(),
-                    ));
-                }
-            }
+            FaultConfig::PacketLoss(config) => {}
             FaultConfig::Bandwidth(config) => {
                 if config.bandwidth_rate == 0 {
                     return Err(ProxyError::InvalidConfiguration(
@@ -179,11 +171,7 @@ impl ProxyConfig {
         config: CliPacketLossConfig,
         direction: Direction,
     ) -> Result<Self, String> {
-        let packet_loss_settings = PacketLossSettings {
-            loss_type: config.loss_type,
-            packet_loss_rate: config.rate,
-            direction,
-        };
+        let packet_loss_settings = PacketLossSettings { direction };
         let fault_config = FaultConfig::PacketLoss(packet_loss_settings);
         Ok(Self { fault: fault_config })
     }

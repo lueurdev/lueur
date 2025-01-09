@@ -316,24 +316,7 @@ pub struct CliLatencyConfig {
 
 /// CLI Configuration for Packet Loss Fault
 #[derive(Args, Clone, Debug, Serialize, Deserialize)]
-pub struct CliPacketLossConfig {
-    /// Type of packet loss model
-    #[arg(
-        long,
-        value_enum,
-        help = "Type of packet loss model (options: bernoulli, gilbert_elliott)."
-    )]
-    pub loss_type: PacketLossType,
-
-    /// Packet loss rate (e.g., 0.1 for 10%)
-    #[arg(
-        long,
-        default_value_t = 0.1,
-        help = "Packet loss rate as a fraction (e.g., 0.1 for 10%). Must be between 0.0 and 1.0.",
-        value_parser = validate_fraction
-    )]
-    pub rate: f64,
-}
+pub struct CliPacketLossConfig {}
 
 /// CLI Configuration for Bandwidth Throttling Fault
 #[derive(Args, Clone, Debug, Serialize, Deserialize)]

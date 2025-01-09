@@ -525,14 +525,12 @@ impl FaultInjector for BandwidthLimitFaultInjector {
         request: ReqwestRequest,
         event: Box<dyn ProxyTaskEvent>,
     ) -> Result<ReqwestRequest, ProxyError> {
+        let _ = event
+            .with_fault(FaultEvent::Bandwidth { bps: None }, Direction::Egress);
+
         let original_body = request.body();
         if let Some(body) = original_body {
             if let Some(bytes) = body.as_bytes() {
-                let _ = event.with_fault(
-                    FaultEvent::Bandwidth { bps: None },
-                    Direction::Egress,
-                );
-
                 let owned_bytes = Cursor::new(bytes.to_vec());
 
                 // Wrap the owned bytes with BandwidthLimitedRead

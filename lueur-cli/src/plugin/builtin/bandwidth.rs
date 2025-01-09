@@ -87,8 +87,10 @@ impl ProxyPlugin for BandwidthPlugin {
         resp: http::Response<Vec<u8>>,
         event: Box<dyn ProxyTaskEvent>,
     ) -> Result<http::Response<Vec<u8>>, ProxyError> {
-        tracing::debug!("Injecting bandwidth limiter on response");
-        self.injector.apply_on_response(resp, event).await
+        match self.direction.is_egress() {
+            true => self.injector.apply_on_response(resp, event).await,
+            false => Ok(resp),
+        }
     }
 
     /// Injects rate limiting into the CONNECT tunnel streams.

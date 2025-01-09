@@ -119,6 +119,16 @@ pub async fn handle_displayable_events(
 
                                             task_info.pb.set_message(format!("{} | {} | {} | {} | ...", u, d, f, formatted_rate));
                                         }
+                                    } else
+                                    if let FaultEvent::PacketLoss { } = &fault {
+                                        task_info.events.push(fault.clone());
+                                        let formatted_rate = "".to_string();
+
+                                        let u = format!("{} {}", "URL:".dimmed(), task_info.url.bright_blue());
+                                        let d = format!("{} {}ms", "DNS:".dimmed(), task_info.resolution_time);
+                                        let f = fault_to_string(&task_info.fault);
+
+                                        task_info.pb.set_message(format!("{} | {} | {} | {} | ...", u, d, f, formatted_rate));
                                     }
                                 }
                             }
@@ -210,6 +220,15 @@ pub async fn handle_displayable_events(
 
                                                 task_info.pb.set_message(format!("{} | {} | {} | {} | ...", u, d, f, formatted_rate));
                                             }
+                                        } else
+                                        if let FaultEvent::PacketLoss { } = &fault {
+                                            let formatted_rate = "".to_string();
+
+                                            let u = format!("{} {}", "URL:".dimmed(), task_info.url.bright_blue());
+                                            let d = format!("{} {}ms", "DNS:".dimmed(), task_info.resolution_time);
+                                            let f = fault_to_string(&task_info.fault);
+
+                                            task_info.pb.set_message(format!("{} | {} | {} | {} | ...", u, d, f, formatted_rate));
                                         }
                                     }
 
@@ -290,7 +309,7 @@ fn fault_to_string(fault: &Option<FaultEvent>) -> String {
                 let f = "jitter".yellow();
                 format!("{} {}", c, f)
             }
-            FaultEvent::PacketLoss { loss_probability: _ } => {
+            FaultEvent::PacketLoss {} => {
                 let c = "Fault:".dimmed();
                 let f = "packet loss".yellow();
                 format!("{} {}", c, f)
