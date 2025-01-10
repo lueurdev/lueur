@@ -28,32 +28,11 @@ use tokio_util::io::ReaderStream;
 
 use super::Bidirectional;
 use super::FaultInjector;
+use crate::config::BandwidthSettings;
 use crate::errors::ProxyError;
 use crate::event::FaultEvent;
 use crate::event::ProxyTaskEvent;
-use crate::types::BandwidthUnit;
 use crate::types::Direction;
-
-/// Enumeration of bandwidth throttling strategies.
-#[derive(Debug, Clone)]
-pub enum BandwidthStrategy {
-    Single {
-        rate: usize,         // Bandwidth rate as specified by the user
-        unit: BandwidthUnit, // Unit for the bandwidth rate
-    },
-    Dual {
-        ingress_rate: usize,
-        ingress_unit: BandwidthUnit,
-        egress_rate: usize,
-        egress_unit: BandwidthUnit,
-    },
-}
-
-/// Options for jitter injection.
-#[derive(Debug, Clone)]
-pub struct BandwidthOptions {
-    pub strategy: BandwidthStrategy,
-}
 
 type Limiter = RateLimiter<NotKeyed, InMemoryState, DefaultClock>;
 
@@ -84,50 +63,28 @@ where
     /// * `event` - An optional event handler for fault events.
     pub fn new(
         inner: S,
-        options: BandwidthOptions,
+        settings: BandwidthSettings,
         event: Option<Box<dyn ProxyTaskEvent>>,
     ) -> Result<Self, S> {
         // Initialize egress limiter based on strategy
-        let (limiter, max_write_size) = match options.strategy {
-            BandwidthStrategy::Single { rate, unit } => {
-                let rate_bps = unit.to_bytes_per_second(rate);
-                if rate_bps == 0 {
-                    return Err(inner);
-                }
-                // Attempt to create a NonZeroU32 quota
-                let quota = match NonZeroU32::new(rate_bps as u32) {
-                    Some(q) => Quota::per_second(q),
-                    None => return Err(inner), /* Fail if quota cannot be
-                                                * created */
-                };
-                (Some(Arc::new(RateLimiter::direct(quota))), rate_bps)
-            }
-            BandwidthStrategy::Dual {
-                ingress_rate: _,
-                ingress_unit: _,
-                egress_rate,
-                egress_unit,
-            } => {
-                let egress_bps = egress_unit.to_bytes_per_second(egress_rate);
-                if egress_bps == 0 {
-                    return Err(inner);
-                }
-                // Attempt to create a NonZeroU32 quota
-                let quota = match NonZeroU32::new(egress_bps as u32) {
-                    Some(q) => Quota::per_second(q),
-                    None => return Err(inner), /* Fail if quota cannot be
-                                                * created */
-                };
-                (Some(Arc::new(RateLimiter::direct(quota))), egress_bps)
-            }
+        let rate_bps = settings
+            .bandwidth_unit
+            .to_bytes_per_second(settings.bandwidth_rate);
+        if rate_bps == 0 {
+            return Err(inner);
+        }
+        let quota = match NonZeroU32::new(rate_bps as u32) {
+            Some(q) => Quota::per_second(q),
+            None => return Err(inner), /* Fail if quota cannot be
+                                        * created */
         };
 
         Ok(BandwidthLimitedWrite {
             inner,
-            limiter,
+            limiter: Some(Arc::new(RateLimiter::direct(quota))),
             delay: None,
             event,
-            max_write_size,
+            max_write_size: rate_bps,
         })
     }
 }
@@ -158,50 +115,27 @@ where
     /// * `event` - An optional event handler for fault events.
     pub fn new(
         inner: S,
-        options: BandwidthOptions,
+        settings: BandwidthSettings,
         event: Option<Box<dyn ProxyTaskEvent>>,
     ) -> Result<Self, S> {
-        // Initialize ingress limiter based on strategy
-        let (limiter, max_read_size) = match options.strategy {
-            BandwidthStrategy::Single { rate, unit } => {
-                let rate_bps = unit.to_bytes_per_second(rate);
-                if rate_bps == 0 {
-                    return Err(inner);
-                }
-                let quota = match NonZeroU32::new(rate_bps as u32) {
-                    Some(q) => Quota::per_second(q),
-                    None => return Err(inner), /* Fail if quota cannot be
-                                                * created */
-                };
-                (Some(Arc::new(RateLimiter::direct(quota))), rate_bps)
-            }
-            BandwidthStrategy::Dual {
-                ingress_rate,
-                ingress_unit,
-                egress_rate: _,
-                egress_unit: _,
-            } => {
-                let ingress_bps =
-                    ingress_unit.to_bytes_per_second(ingress_rate);
-                if ingress_bps == 0 {
-                    return Err(inner);
-                }
-                // Attempt to create a NonZeroU32 quota
-                let quota = match NonZeroU32::new(ingress_bps as u32) {
-                    Some(q) => Quota::per_second(q),
-                    None => return Err(inner), /* Fail if quota cannot be
-                                                * created */
-                };
-                (Some(Arc::new(RateLimiter::direct(quota))), ingress_bps)
-            }
+        let rate_bps = settings
+            .bandwidth_unit
+            .to_bytes_per_second(settings.bandwidth_rate);
+        if rate_bps == 0 {
+            return Err(inner);
+        }
+        let quota = match NonZeroU32::new(rate_bps as u32) {
+            Some(q) => Quota::per_second(q),
+            None => return Err(inner), /* Fail if quota cannot be
+                                        * created */
         };
 
         Ok(BandwidthLimitedRead {
             inner,
-            limiter,
+            limiter: Some(Arc::new(RateLimiter::direct(quota))),
             delay: None,
             event,
-            max_read_size,
+            max_read_size: rate_bps,
         })
     }
 }
@@ -448,26 +382,25 @@ where
 
 #[derive(Debug, Clone)]
 pub struct BandwidthLimitFaultInjector {
-    pub options: BandwidthOptions,
+    pub settings: BandwidthSettings,
 }
 
-impl BandwidthLimitFaultInjector {
-    pub fn new(options: BandwidthOptions) -> BandwidthLimitFaultInjector {
-        BandwidthLimitFaultInjector { options }
+impl From<&BandwidthSettings> for BandwidthLimitFaultInjector {
+    fn from(settings: &BandwidthSettings) -> Self {
+        BandwidthLimitFaultInjector { settings: settings.clone() }
     }
 }
-
-// TokioAsyncRead + TokioAsyncWrite + Unpin + Send
 
 #[async_trait]
 impl FaultInjector for BandwidthLimitFaultInjector {
     fn inject(
         &self,
         stream: Box<dyn Bidirectional + 'static>,
-        direction: &Direction,
         event: Box<dyn ProxyTaskEvent>,
     ) -> Box<dyn Bidirectional + 'static> {
         let (read_half, write_half) = split(stream);
+
+        let direction = self.settings.direction.clone();
 
         let _ = event
             .with_fault(FaultEvent::Bandwidth { bps: None }, direction.clone());
@@ -477,7 +410,7 @@ impl FaultInjector for BandwidthLimitFaultInjector {
             if direction.is_ingress() {
                 match BandwidthLimitedRead::new(
                     read_half,
-                    self.options.clone(),
+                    self.settings.clone(),
                     Some(event.clone()),
                 ) {
                     Ok(lr) => Box::new(lr),
@@ -494,7 +427,7 @@ impl FaultInjector for BandwidthLimitFaultInjector {
             if direction.is_egress() {
                 match BandwidthLimitedWrite::new(
                     write_half,
-                    self.options.clone(),
+                    self.settings.clone(),
                     Some(event.clone()),
                 ) {
                     Ok(lw) => Box::new(lw),
@@ -536,7 +469,7 @@ impl FaultInjector for BandwidthLimitFaultInjector {
                 // Wrap the owned bytes with BandwidthLimitedRead
                 let bandwidth_limited_read = BandwidthLimitedRead::new(
                     owned_bytes,
-                    self.options.clone(),
+                    self.settings.clone(),
                     Some(event.clone()),
                 )
                 .unwrap();
@@ -579,7 +512,7 @@ impl FaultInjector for BandwidthLimitFaultInjector {
 
         let reader = BandwidthLimitedRead::new(
             owned_body,
-            self.options.clone(),
+            self.settings.clone(),
             Some(event.clone()),
         )
         .unwrap();

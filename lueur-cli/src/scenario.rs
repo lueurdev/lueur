@@ -133,7 +133,7 @@ pub async fn execute_item(
 
     let fault = item.context.fault.clone();
     let fault_config = fault.build().unwrap();
-    let new_config = ProxyConfig::new(fault_config.clone()).unwrap();
+    let new_config = ProxyConfig { faults: vec![fault_config.clone()] };
 
     if app_state.config_tx.send(new_config).is_err() {
         tracing::error!("Proxy task has been shut down.");

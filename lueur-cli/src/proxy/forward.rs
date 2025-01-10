@@ -15,6 +15,7 @@ use url::Url;
 use super::ProxyState;
 use crate::errors::ProxyError;
 use crate::event::ProxyTaskEvent;
+use crate::plugin::ProxyPlugin;
 use crate::reporting::DnsTiming;
 use crate::resolver::TimingResolver;
 
@@ -105,14 +106,11 @@ impl Forward {
         client_builder = client_builder.dns_resolver(resolver);
 
         if !passthrough {
-            {
-                let plugins_lock = plugins.read().await;
-                for plugin in plugins_lock.iter() {
-                    client_builder = plugin
-                        .prepare_client(client_builder, event.clone())
-                        .await?;
-                }
-            }
+            let plugins_lock = plugins.read().await;
+            client_builder = plugins_lock
+                .prepare_client(client_builder, event.clone())
+                .await
+                .unwrap();
         }
 
         let client = client_builder.build().unwrap();
@@ -131,19 +129,11 @@ impl Forward {
         })?;
 
         if !passthrough {
-            {
-                let plugins_lock = plugins.read().await;
-                for plugin in plugins_lock.iter() {
-                    upstream_req = plugin
-                        .process_request(upstream_req, event.clone())
-                        .await
-                        .map_err(|e| {
-                            error!("Plugin processing request failed: {}", e);
-                            e
-                        })
-                        .unwrap();
-                }
-            }
+            let plugins_lock = plugins.read().await;
+            upstream_req = plugins_lock
+                .process_request(upstream_req, event.clone())
+                .await
+                .unwrap();
         }
 
         // Execute the Reqwest request
@@ -191,11 +181,10 @@ impl Forward {
             axum_response = {
                 let plugins_lock = plugins.read().await;
                 let mut resp = axum_response;
-                for plugin in plugins_lock.iter() {
-                    tracing::info!("Plugin: {}", plugin);
-                    resp = plugin.process_response(resp, event.clone()).await?;
-                }
-                resp
+                plugins_lock
+                    .process_response(resp, event.clone())
+                    .await
+                    .unwrap()
             };
         }
 

@@ -3,16 +3,15 @@ use std::fmt;
 use serde::Deserialize;
 use serde::Serialize;
 
-use crate::cli::CliBandwidthConfig;
-use crate::cli::CliDNSConfig;
-use crate::cli::CliJitterConfig;
-use crate::cli::CliLatencyConfig;
-use crate::cli::CliPacketLossConfig;
-use crate::errors::ProxyError;
+use crate::cli::BandwidthOptions;
+use crate::cli::DnsOptions;
+use crate::cli::JitterOptions;
+use crate::cli::LatencyOptions;
+use crate::cli::PacketLossOptions;
+use crate::cli::RunCommandOptions;
 use crate::types::BandwidthUnit;
 use crate::types::Direction;
 use crate::types::LatencyDistribution;
-use crate::types::PacketLossType;
 
 /// Internal Configuration for Latency Fault
 #[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq)]
@@ -37,7 +36,7 @@ pub struct PacketLossSettings {
 #[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq)]
 pub struct BandwidthSettings {
     pub direction: Direction,
-    pub bandwidth_rate: u32, // in bits per second
+    pub bandwidth_rate: usize, // in bytes per second
     pub bandwidth_unit: BandwidthUnit,
 }
 
@@ -88,117 +87,80 @@ impl fmt::Display for FaultConfig {
 /// Proxy Configuration Struct
 #[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq)]
 pub struct ProxyConfig {
-    pub fault: FaultConfig,
+    pub faults: Vec<FaultConfig>,
 }
 
-impl ProxyConfig {
-    pub fn new(fault_config: FaultConfig) -> Result<Self, ProxyError> {
-        // Validation logic
-        match &fault_config {
-            FaultConfig::Dns(config) => {
-                if config.dns_rate > 100 {
-                    return Err(ProxyError::InvalidConfiguration(
-                        "Probability to trigger the DNS failure must be below 100.".into(),
-                    ));
-                }
-            }
-            FaultConfig::Latency(config) => {
-                if config.latency_mean <= 0.0 {
-                    return Err(ProxyError::InvalidConfiguration(
-                        "Latency mean must be a positive value.".into(),
-                    ));
-                }
-                if config.latency_stddev < 0.0 {
-                    return Err(ProxyError::InvalidConfiguration(
-                        "Latency standard deviation must be non-negative."
-                            .into(),
-                    ));
-                }
-            }
-            FaultConfig::PacketLoss(config) => {}
-            FaultConfig::Bandwidth(config) => {
-                if config.bandwidth_rate == 0 {
-                    return Err(ProxyError::InvalidConfiguration(
-                        "Bandwidth rate must be a positive integer.".into(),
-                    ));
-                }
-            }
-            FaultConfig::Jitter(config) => {
-                if config.jitter_amplitude < 0.0 {
-                    return Err(ProxyError::InvalidConfiguration(
-                        "Jitter amplitude must be non-negative.".into(),
-                    ));
-                }
-                if config.jitter_frequency < 0.0 {
-                    return Err(ProxyError::InvalidConfiguration(
-                        "Jitter frequency must be non-negative.".into(),
-                    ));
-                }
-            }
+impl From<&RunCommandOptions> for ProxyConfig {
+    fn from(cli: &RunCommandOptions) -> Self {
+        let mut faults = Vec::new();
+
+        if cli.latency.enabled {
+            faults.push(FaultConfig::Latency((&cli.latency).into()));
         }
 
-        Ok(Self { fault: fault_config })
-    }
+        if cli.bandwidth.enabled {
+            faults.push(FaultConfig::Bandwidth((&cli.bandwidth).into()));
+        }
 
-    pub fn new_dns(
-        config: CliDNSConfig,
-        direction: Direction,
-    ) -> Result<Self, String> {
-        let dns_settings = DnsSettings { dns_rate: config.rate, direction };
-        let fault_config = FaultConfig::Dns(dns_settings);
-        Ok(Self { fault: fault_config })
-    }
+        if cli.dns.enabled {
+            faults.push(FaultConfig::Dns((&cli.dns).into()));
+        }
 
-    pub fn new_latency(
-        config: CliLatencyConfig,
-        direction: Direction,
-    ) -> Result<Self, String> {
-        let latency_settings = LatencySettings {
-            distribution: config.distribution,
-            latency_mean: config.mean,
-            latency_stddev: config.stddev,
-            latency_min: config.min,
-            latency_max: config.max,
-            latency_shape: config.shape,
-            latency_scale: config.scale,
-            direction,
-        };
-        let fault_config = FaultConfig::Latency(latency_settings);
-        Ok(Self { fault: fault_config })
-    }
+        if cli.jitter.enabled {
+            faults.push(FaultConfig::Jitter((&cli.jitter).into()));
+        }
 
-    pub fn new_packet_loss(
-        config: CliPacketLossConfig,
-        direction: Direction,
-    ) -> Result<Self, String> {
-        let packet_loss_settings = PacketLossSettings { direction };
-        let fault_config = FaultConfig::PacketLoss(packet_loss_settings);
-        Ok(Self { fault: fault_config })
-    }
+        if cli.packet_loss.enabled {
+            faults.push(FaultConfig::PacketLoss((&cli.packet_loss).into()));
+        }
 
-    pub fn new_bandwidth(
-        config: CliBandwidthConfig,
-        direction: Direction,
-    ) -> Result<Self, String> {
-        let bandwidth_settings = BandwidthSettings {
-            bandwidth_rate: config.rate,
-            bandwidth_unit: config.unit,
-            direction,
-        };
-        let fault_config = FaultConfig::Bandwidth(bandwidth_settings);
-        Ok(Self { fault: fault_config })
+        ProxyConfig { faults }
     }
+}
 
-    pub fn new_jitter(
-        config: CliJitterConfig,
-        direction: Direction,
-    ) -> Result<Self, String> {
-        let jitter_settings = JitterSettings {
-            jitter_amplitude: config.amplitude,
-            jitter_frequency: config.frequency,
-            direction,
-        };
-        let fault_config = FaultConfig::Jitter(jitter_settings);
-        Ok(Self { fault: fault_config })
+impl From<&LatencyOptions> for LatencySettings {
+    fn from(cli: &LatencyOptions) -> Self {
+        LatencySettings {
+            distribution: cli.latency_distribution.clone(),
+            direction: cli.latency_direction.clone(),
+            latency_mean: cli.latency_mean,
+            latency_stddev: cli.latency_stddev,
+            latency_shape: cli.latency_shape,
+            latency_scale: cli.latency_scale,
+            latency_min: cli.latency_min,
+            latency_max: cli.latency_max,
+        }
+    }
+}
+
+impl From<&BandwidthOptions> for BandwidthSettings {
+    fn from(cli: &BandwidthOptions) -> Self {
+        BandwidthSettings {
+            direction: cli.bandwidth_direction.clone(),
+            bandwidth_rate: cli.bandwidth_rate,
+            bandwidth_unit: cli.bandwidth_unit,
+        }
+    }
+}
+
+impl From<&JitterOptions> for JitterSettings {
+    fn from(cli: &JitterOptions) -> Self {
+        JitterSettings {
+            direction: cli.jitter_direction.clone(),
+            jitter_amplitude: cli.jitter_amplitude,
+            jitter_frequency: cli.jitter_frequency,
+        }
+    }
+}
+
+impl From<&DnsOptions> for DnsSettings {
+    fn from(cli: &DnsOptions) -> Self {
+        DnsSettings { direction: Direction::Egress, dns_rate: cli.dns_rate }
+    }
+}
+
+impl From<&PacketLossOptions> for PacketLossSettings {
+    fn from(cli: &PacketLossOptions) -> Self {
+        PacketLossSettings { direction: cli.packet_loss_direction.clone() }
     }
 }

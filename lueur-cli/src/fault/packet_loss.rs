@@ -22,6 +22,7 @@ use tokio_util::io::ReaderStream;
 
 use super::Bidirectional;
 use super::FaultInjector;
+use crate::config::PacketLossSettings;
 use crate::errors::ProxyError;
 use crate::event::FaultEvent;
 use crate::event::ProxyTaskEvent;
@@ -130,10 +131,11 @@ impl<S> PacketLossLimitedRead<S> {
     /// * `event` - An optional event handler for fault events.
     pub fn new(
         inner: S,
-        options: PacketLossOptions,
+        settings: PacketLossSettings,
         event: Option<Box<dyn ProxyTaskEvent>>,
     ) -> Self {
-        let (transition_matrix, loss_probabilities) = match options.strategy {
+        let strategy = PacketLossStrategy::default();
+        let (transition_matrix, loss_probabilities) = match strategy {
             PacketLossStrategy::MultiStateMarkov {
                 ref transition_matrix,
                 ref loss_probabilities,
@@ -143,12 +145,10 @@ impl<S> PacketLossLimitedRead<S> {
             ),
         };
 
-        let initial_state = MultiState::Good; // Starting state for Markov model
-
         PacketLossLimitedRead {
             inner,
-            strategy: options.strategy,
-            state: initial_state,
+            strategy: strategy,
+            state: MultiState::Good,
             transition_matrix,
             loss_probabilities,
             event,
@@ -234,10 +234,11 @@ impl<S> PacketLossLimitedWrite<S> {
     /// * `event` - An optional event handler for fault events.
     pub fn new(
         inner: S,
-        options: PacketLossOptions,
+        settings: PacketLossSettings,
         event: Option<Box<dyn ProxyTaskEvent>>,
     ) -> Self {
-        let (transition_matrix, loss_probabilities) = match options.strategy {
+        let strategy = PacketLossStrategy::default();
+        let (transition_matrix, loss_probabilities) = match strategy {
             PacketLossStrategy::MultiStateMarkov {
                 ref transition_matrix,
                 ref loss_probabilities,
@@ -247,12 +248,10 @@ impl<S> PacketLossLimitedWrite<S> {
             ),
         };
 
-        let initial_state = MultiState::Good; // Starting state for Markov model
-
         PacketLossLimitedWrite {
             inner,
-            strategy: options.strategy,
-            state: initial_state,
+            strategy: strategy,
+            state: MultiState::Good,
             transition_matrix,
             loss_probabilities,
             event,
@@ -394,17 +393,12 @@ where
 
 #[derive(Debug, Clone)]
 pub struct PacketLossInjector {
-    pub options: PacketLossOptions,
+    pub settings: PacketLossSettings,
 }
 
-impl PacketLossInjector {
-    /// Creates a new PacketLossFaultInjector.
-    ///
-    /// # Arguments
-    ///
-    /// * `options` - The packet loss options.
-    pub fn new(options: PacketLossOptions) -> Self {
-        PacketLossInjector { options }
+impl From<&PacketLossSettings> for PacketLossInjector {
+    fn from(settings: &PacketLossSettings) -> Self {
+        PacketLossInjector { settings: settings.clone() }
     }
 }
 
@@ -414,10 +408,11 @@ impl FaultInjector for PacketLossInjector {
     fn inject(
         &self,
         stream: Box<dyn Bidirectional + 'static>,
-        direction: &Direction,
         event: Box<dyn ProxyTaskEvent>,
     ) -> Box<dyn Bidirectional + 'static> {
         let (read_half, write_half) = split(stream);
+
+        let direction = self.settings.direction.clone();
 
         let _ = event.with_fault(FaultEvent::PacketLoss {}, direction.clone());
 
@@ -437,7 +432,7 @@ impl FaultInjector for PacketLossInjector {
             if direction.is_ingress() {
                 Box::new(PacketLossLimitedRead::new(
                     read_half,
-                    self.options.clone(),
+                    self.settings.clone(),
                     Some(event.clone()),
                 ))
             } else {
@@ -449,7 +444,7 @@ impl FaultInjector for PacketLossInjector {
             if direction.is_egress() {
                 Box::new(PacketLossLimitedWrite::new(
                     write_half,
-                    self.options.clone(),
+                    self.settings.clone(),
                     Some(event.clone()),
                 ))
             } else {
@@ -490,7 +485,7 @@ impl FaultInjector for PacketLossInjector {
                 // Wrap the owned bytes with PacketLossLimitedRead
                 let packet_loss_limited_read = PacketLossLimitedRead::new(
                     owned_bytes,
-                    self.options.clone(),
+                    self.settings.clone(),
                     Some(event.clone()),
                 );
 
@@ -535,7 +530,7 @@ impl FaultInjector for PacketLossInjector {
         // Wrap the owned body with PacketLossLimitedRead
         let packet_loss_limited_read = PacketLossLimitedRead::new(
             owned_body,
-            self.options.clone(),
+            self.settings.clone(),
             Some(event.clone()),
         );
 

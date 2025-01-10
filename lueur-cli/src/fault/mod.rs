@@ -34,7 +34,6 @@ pub trait FaultInjector: Send + Sync + std::fmt::Debug {
     fn inject(
         &self,
         stream: Box<dyn Bidirectional + 'static>,
-        direction: &Direction,
         _event: Box<dyn ProxyTaskEvent>,
     ) -> Box<dyn Bidirectional + 'static>;
 

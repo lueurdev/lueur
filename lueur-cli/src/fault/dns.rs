@@ -16,6 +16,7 @@ use tokio::sync::RwLock;
 
 use super::Bidirectional;
 use super::FaultInjector;
+use crate::config::DnsSettings;
 use crate::event::FaultEvent;
 use crate::event::ProxyTaskEvent;
 use crate::types::Direction;
@@ -35,24 +36,29 @@ pub struct DnsOptions {
 #[derive(Clone, Debug)]
 pub struct FaultyResolverInjector {
     inner: Arc<RwLock<TokioAsyncResolver>>,
-    options: DnsOptions,
+    settings: DnsSettings,
     event: Option<Box<dyn ProxyTaskEvent>>,
+    rng: SmallRng,
 }
 
-impl FaultyResolverInjector {
-    pub fn new(options: DnsOptions) -> Self {
+impl From<&DnsSettings> for FaultyResolverInjector {
+    fn from(settings: &DnsSettings) -> Self {
         let resolver = TokioAsyncResolver::tokio(
             ResolverConfig::default(),
             ResolverOpts::default(),
         );
-        Self { options, inner: Arc::new(RwLock::new(resolver)), event: None }
-    }
-
-    fn should_apply_fault_resolver(&self) -> bool {
-        let mut rng: SmallRng = SmallRng::from_entropy();
-        match &self.options.strategy {
-            DnsStrategy::Fixed { rate, .. } => rng.gen_bool(*rate),
+        FaultyResolverInjector {
+            inner: Arc::new(RwLock::new(resolver)),
+            settings: settings.clone(),
+            event: None,
+            rng: SmallRng::from_entropy(),
         }
+    }
+}
+
+impl FaultyResolverInjector {
+    fn should_apply_fault_resolver(&mut self) -> bool {
+        self.rng.gen_bool(self.settings.dns_rate as f64 / 100.0)
     }
 
     pub fn with_event(&mut self, event: Box<dyn ProxyTaskEvent>) {
@@ -62,7 +68,7 @@ impl FaultyResolverInjector {
 
 impl Resolve for FaultyResolverInjector {
     fn resolve(&self, hostname: Name) -> Resolving {
-        let self_clone = self.clone();
+        let mut self_clone = self.clone();
 
         Box::pin(async move {
             let host = hostname.as_str();
@@ -109,7 +115,6 @@ impl FaultInjector for FaultyResolverInjector {
     fn inject(
         &self,
         stream: Box<dyn Bidirectional + 'static>,
-        direction: &Direction,
         _event: Box<dyn ProxyTaskEvent>,
     ) -> Box<dyn Bidirectional + 'static> {
         stream

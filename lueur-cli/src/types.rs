@@ -214,7 +214,7 @@ impl FaultConfiguration {
             } => {
                 let settings = config::BandwidthSettings {
                     direction: Direction::from_str(direction).unwrap(),
-                    bandwidth_rate: *bandwidth_rate,
+                    bandwidth_rate: *bandwidth_rate as usize,
                     bandwidth_unit: bandwidth_unit.clone(),
                 };
 

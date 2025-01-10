@@ -34,7 +34,6 @@ use cli::Cli;
 use cli::Commands;
 use cli::DemoCommands;
 use cli::ProxyAwareCommandCommon;
-use cli::RunCommands;
 use cli::ScenarioCommands;
 use colored::Colorize;
 use colorful::Color;
@@ -48,7 +47,6 @@ use indicatif::ProgressBar;
 use indicatif::ProgressStyle;
 use logging::init_logging;
 use nic::ProxyEbpfConfig;
-use plugin::rpc::load_remote_plugins;
 use proxy::ProxyState;
 use proxy::run_proxy;
 use reporting::OutputFormat;
@@ -87,27 +85,26 @@ async fn main() -> Result<()> {
     let (task_manager, receiver) = TaskManager::new(1000);
 
     match &cli.command {
-        Commands::Run { run, common } => {
+        Commands::Run { options } => {
             let _progress_guard =
                 task::spawn(handle_displayable_events(receiver));
 
-            let proxy_address = common.proxy_address.clone();
+            let proxy_address = options.common.proxy_address.clone();
             let proxy_nic_config = nic::determine_proxy_and_ebpf_config(
                 proxy_address,
-                common.iface.clone(),
+                options.common.iface.clone(),
             )
             .unwrap();
 
             let app_state = initialize_proxy(
-                common,
+                &options.common,
                 &proxy_nic_config,
                 shutdown_rx,
                 task_manager.clone(),
             )
             .await;
 
-            let cmd_config =
-                get_run_command_proxy_config((*run).clone()).unwrap();
+            let cmd_config: ProxyConfig = options.into();
 
             if app_state.config_tx.send(cmd_config).is_err() {
                 error!("Proxy configuration listener has been shut down.");
@@ -352,39 +349,6 @@ fn map_faults(
         .collect()
 }
 
-/// Handles the 'Run' subcommands
-fn get_run_command_proxy_config(
-    run_cmd: RunCommands,
-) -> Result<config::ProxyConfig, ProxyError> {
-    match run_cmd {
-        RunCommands::Dns(run_cmd_dns) => {
-            let direction = run_cmd_dns.common.direction;
-            let config = run_cmd_dns.config;
-            Ok(config::ProxyConfig::new_dns(config, direction).unwrap())
-        }
-        RunCommands::Latency(run_cmd_latency) => {
-            let direction = run_cmd_latency.common.direction;
-            let config = run_cmd_latency.config;
-            Ok(config::ProxyConfig::new_latency(config, direction).unwrap())
-        }
-        RunCommands::PacketLoss(run_cmd_packet_loss) => {
-            let direction = run_cmd_packet_loss.common.direction;
-            let config = run_cmd_packet_loss.config;
-            Ok(config::ProxyConfig::new_packet_loss(config, direction).unwrap())
-        }
-        RunCommands::Bandwidth(run_cmd_bandwidth) => {
-            let direction = run_cmd_bandwidth.common.direction;
-            let config = run_cmd_bandwidth.config;
-            Ok(config::ProxyConfig::new_bandwidth(config, direction).unwrap())
-        }
-        RunCommands::Jitter(run_cmd_jitter) => {
-            let direction = run_cmd_jitter.common.direction;
-            let config = run_cmd_jitter.config;
-            Ok(config::ProxyConfig::new_jitter(config, direction).unwrap())
-        }
-    }
-}
-
 #[derive(Debug, Clone)]
 struct AppState {
     pub proxy_state: Arc<ProxyState>,
@@ -414,8 +378,8 @@ async fn initialize_proxy(
     let proxy_state = state.clone();
     let proxy_address = proxy_nic_config.proxy_address();
 
-    let rpc_plugin = load_remote_plugins(cli.grpc_plugins.clone()).await;
-    state.update_plugins(vec![rpc_plugin]).await;
+    //let rpc_plugin = load_remote_plugins(cli.grpc_plugins.clone()).await;
+    //state.update_plugins(vec![rpc_plugin]).await;
 
     state.update_upstream_hosts(upstreams).await;
 

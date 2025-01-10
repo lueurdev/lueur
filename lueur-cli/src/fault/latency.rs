@@ -1,5 +1,3 @@
-// src/fault/latency.rs
-
 use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
@@ -22,37 +20,38 @@ use tokio::time::sleep;
 
 use super::Bidirectional;
 use super::FaultInjector;
+use crate::config::LatencySettings;
 use crate::event::FaultEvent;
 use crate::event::ProxyTaskEvent;
 use crate::types::Direction;
-
-#[derive(Debug, Clone)]
-pub enum LatencyStrategy {
-    Normal { mean: f64, stddev: f64 },
-    Pareto { shape: f64, scale: f64 },
-    ParetoNormal { shape: f64, scale: f64, mean: f64, stddev: f64 },
-    Uniform { min: f64, max: f64 },
-}
-
-#[derive(Debug, Clone)]
-pub struct LatencyOptions {
-    pub strategy: LatencyStrategy,
-}
+use crate::types::LatencyDistribution;
 
 #[derive(Debug)]
 pub struct LatencyInjector {
-    options: LatencyOptions,
+    settings: LatencySettings,
+}
+
+impl From<&LatencySettings> for LatencyInjector {
+    fn from(settings: &LatencySettings) -> Self {
+        LatencyInjector { settings: settings.clone() }
+    }
+}
+
+impl Clone for LatencyInjector {
+    fn clone(&self) -> Self {
+        Self { settings: self.settings.clone() }
+    }
 }
 
 impl LatencyInjector {
-    pub fn new(options: LatencyOptions) -> Self {
-        Self { options }
-    }
-
     fn get_delay(&self, rng: &mut SmallRng) -> Duration {
-        match &self.options.strategy {
-            LatencyStrategy::Normal { mean, stddev } => {
-                let normal = Normal::new(*mean, *stddev).unwrap();
+        match &self.settings.distribution {
+            LatencyDistribution::Normal => {
+                let normal = Normal::new(
+                    self.settings.latency_mean,
+                    self.settings.latency_stddev,
+                )
+                .unwrap();
                 let mut sample = normal.sample(rng);
                 while sample < 0.0 {
                     sample = normal.sample(rng);
@@ -64,8 +63,12 @@ impl LatencyInjector {
                 Duration::from_millis(millis)
                     + Duration::from_nanos(nanos as u64)
             }
-            LatencyStrategy::Pareto { shape, scale } => {
-                let pareto = Pareto::new(*shape, *scale).unwrap();
+            LatencyDistribution::Pareto => {
+                let pareto = Pareto::new(
+                    self.settings.latency_scale,
+                    self.settings.latency_shape,
+                )
+                .unwrap();
                 let mut sample = pareto.sample(rng);
                 while sample < 0.0 {
                     sample = pareto.sample(rng);
@@ -77,14 +80,22 @@ impl LatencyInjector {
                 Duration::from_millis(millis)
                     + Duration::from_nanos(nanos as u64)
             }
-            LatencyStrategy::ParetoNormal { shape, scale, mean, stddev } => {
-                let pareto = Pareto::new(*shape, *scale).unwrap();
+            LatencyDistribution::ParetoNormal => {
+                let pareto = Pareto::new(
+                    self.settings.latency_scale,
+                    self.settings.latency_shape,
+                )
+                .unwrap();
                 let mut pareto_sample = pareto.sample(rng);
                 while pareto_sample < 0.0 {
                     pareto_sample = pareto.sample(rng);
                 }
 
-                let normal = Normal::new(*mean, *stddev).unwrap();
+                let normal = Normal::new(
+                    self.settings.latency_mean,
+                    self.settings.latency_stddev,
+                )
+                .unwrap();
                 let mut normal_sample = normal.sample(rng);
                 while normal_sample < 0.0 {
                     normal_sample = normal.sample(rng);
@@ -97,8 +108,11 @@ impl LatencyInjector {
                 Duration::from_millis(millis)
                     + Duration::from_nanos(nanos as u64)
             }
-            LatencyStrategy::Uniform { min, max } => {
-                let uniform = Uniform::new(*min, *max);
+            LatencyDistribution::Uniform => {
+                let uniform = Uniform::new(
+                    self.settings.latency_min,
+                    self.settings.latency_max,
+                );
                 let mut sample = uniform.sample(rng);
                 while sample < 0.0 {
                     sample = uniform.sample(rng);
@@ -114,27 +128,21 @@ impl LatencyInjector {
     }
 }
 
-impl Clone for LatencyInjector {
-    fn clone(&self) -> Self {
-        Self { options: self.options.clone() }
-    }
-}
-
 #[async_trait]
 impl FaultInjector for LatencyInjector {
     /// Injects latency into a bidirectional stream.
     fn inject(
         &self,
         stream: Box<dyn Bidirectional + 'static>,
-        direction: &Direction,
         event: Box<dyn ProxyTaskEvent>,
     ) -> Box<dyn Bidirectional + 'static> {
+        let direction = self.settings.direction.clone();
         let _ = event
             .with_fault(FaultEvent::Latency { delay: None }, direction.clone());
         Box::new(LatencyStream::new(
             stream,
             self.clone(),
-            direction,
+            &direction,
             Some(event),
         ))
     }

@@ -26,54 +26,6 @@ use crate::plugin::ProxyPlugin;
 use crate::proxy::ProxyState;
 use crate::types::ConnectRequest;
 
-/// Processes the CONNECT request through all available plugins.
-///
-/// # Arguments
-///
-/// * `connect_request` - The CONNECT request details.
-/// * `plugins` - A list of plugins.
-///
-/// # Returns
-///
-/// * `Result<ConnectRequest, ProxyError>` - The modified CONNECT request or a
-///   ProxyError.
-async fn process_connect_plugins(
-    mut connect_request: ConnectRequest,
-    plugins: &Arc<tokio::sync::RwLock<Vec<Arc<dyn ProxyPlugin>>>>,
-    event: Box<dyn ProxyTaskEvent>,
-) -> Result<ConnectRequest, ProxyError> {
-    let lock = plugins.read().await;
-    for plugin in lock.iter() {
-        connect_request = plugin
-            .process_connect_request(connect_request, event.clone())
-            .await?;
-    }
-    Ok(connect_request)
-}
-
-/// Notifies plugins about the CONNECT response outcome.
-///
-/// # Arguments
-///
-/// * `plugins` - A list of plugins.
-/// * `success` - Whether the CONNECT operation was successful.
-///
-/// # Returns
-///
-/// * `Result<(), ProxyError>` - `Ok` if notifications were successful, or a
-///   ProxyError.
-async fn notify_plugins_connect_response(
-    plugins: &Arc<tokio::sync::RwLock<Vec<Arc<dyn ProxyPlugin>>>>,
-    success: bool,
-    event: Box<dyn ProxyTaskEvent>,
-) -> Result<(), ProxyError> {
-    let lock = plugins.read().await;
-    for plugin in lock.iter() {
-        plugin.process_connect_response(success, event.clone()).await?;
-    }
-    Ok(())
-}
-
 /// Handles CONNECT method requests by establishing a TCP tunnel,
 /// injecting any configured network faults, and applying plugin middleware.
 pub async fn handle_connect(
@@ -92,21 +44,9 @@ pub async fn handle_connect(
         ConnectRequest { target_host: target_host.clone(), target_port };
 
     // Acquire a read lock for plugins
-    let plugins: Arc<tokio::sync::RwLock<Vec<Arc<dyn ProxyPlugin>>>> =
-        app_state.plugins.clone();
+    let plugins = app_state.plugins.clone();
 
-    let mut modified_connect_request = connect_request;
-
-    if !passthrough {
-        modified_connect_request = process_connect_plugins(
-            modified_connect_request,
-            &plugins,
-            event.clone(),
-        )
-        .await?;
-    }
-
-    let host = modified_connect_request.target_host;
+    let host = connect_request.target_host;
 
     let plugins = plugins.clone();
 
@@ -114,7 +54,7 @@ pub async fn handle_connect(
         let event = event.clone();
         let upstream_str = upstream.to_string();
 
-        let port = modified_connect_request.target_port;
+        let port = connect_request.target_port;
         let start = Instant::now();
         let addresses = resolve_addresses(host.clone()).await;
         let dns_resolution_time = start.elapsed().as_millis_f64();
@@ -144,31 +84,26 @@ pub async fn handle_connect(
 
                         if !passthrough {
                             let plugins_lock = plugins.read().await;
-
-                            for plugin in plugins_lock.iter() {
-                                tracing::debug!("Plugin {:?}", &plugin);
-                                match plugin
-                                    .inject_tunnel_faults(
-                                        Box::new(modified_client_stream),
-                                        Box::new(modified_server_stream),
-                                        event.clone(),
-                                    )
-                                    .await
-                                {
-                                    Ok((client, server)) => {
-                                        modified_client_stream = client;
-                                        modified_server_stream = server;
-                                    }
-                                    Err(e) => {
-                                        tracing::error!(
-                                            "Plugin failed to inject tunnel faults: {}",
-                                            e
-                                        );
-                                        return;
-                                    }
+                            match plugins_lock
+                                .inject_tunnel_faults(
+                                    modified_client_stream,
+                                    modified_server_stream,
+                                    event.clone(),
+                                )
+                                .await
+                            {
+                                Ok((client, server)) => {
+                                    modified_client_stream = client;
+                                    modified_server_stream = server;
+                                }
+                                Err(e) => {
+                                    tracing::error!(
+                                        "Plugin failed to inject tunnel faults: {}",
+                                        e
+                                    );
+                                    return;
                                 }
                             }
-
                             drop(plugins_lock);
                         }
 
@@ -210,22 +145,6 @@ pub async fn handle_connect(
                         );
 
                         let _ = event.on_error(Box::new(e));
-
-                        if !passthrough {
-                            if let Err(notify_err) =
-                                notify_plugins_connect_response(
-                                    &plugins,
-                                    false,
-                                    event.clone(),
-                                )
-                                .await
-                            {
-                                error!(
-                                    "Failed to notify plugins about failed connection: {}",
-                                    notify_err
-                                );
-                            }
-                        }
                     }
                 }
             }

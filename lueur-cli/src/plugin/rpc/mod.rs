@@ -308,24 +308,6 @@ impl ProxyPlugin for RpcPlugin {
         self.manager.process_response(resp).await
     }
 
-    async fn process_connect_request(
-        &self,
-        req: ConnectRequest,
-        _event: Box<dyn ProxyTaskEvent>,
-    ) -> Result<ConnectRequest, ProxyError> {
-        // Implement as needed
-        Ok(req)
-    }
-
-    async fn process_connect_response(
-        &self,
-        _success: bool,
-        _event: Box<dyn ProxyTaskEvent>,
-    ) -> Result<(), ProxyError> {
-        // Implement as needed
-        Ok(())
-    }
-
     async fn inject_tunnel_faults(
         &self,
         client_stream: Box<dyn Bidirectional + 'static>,

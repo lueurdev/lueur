@@ -19,57 +19,39 @@ use tokio::time::sleep;
 
 use super::Bidirectional;
 use super::FaultInjector;
+use crate::config::JitterSettings;
 use crate::event::ProxyTaskEvent;
 use crate::types::Direction;
-
-/// Enumeration of jitter strategies.
-#[derive(Debug, Clone)]
-pub enum JitterStrategy {
-    Default { amplitude: Duration, frequency: f64 },
-}
-
-/// Options for jitter injection.
-#[derive(Debug, Clone)]
-pub struct JitterOptions {
-    pub strategy: JitterStrategy,
-}
 
 /// Jitter Injector that introduces variable delays based on amplitude and
 /// frequency.
 #[derive(Debug)]
 pub struct JitterInjector {
-    options: JitterOptions,
+    settings: JitterSettings,
 }
 
 impl JitterInjector {
-    pub fn new(options: JitterOptions) -> Self {
-        Self { options }
-    }
-
     /// Determines whether to inject jitter based on the configured frequency.
     fn should_jitter(&self, rng: &mut SmallRng) -> bool {
-        match &self.options.strategy {
-            JitterStrategy::Default { frequency, .. } => {
-                rng.r#gen::<f64>() < *frequency
-            } // Implement other strategies here.
-        }
+        rng.r#gen::<f64>() < self.settings.jitter_frequency
     }
 
     /// Generates a random jitter duration based on the configured amplitude.
     fn generate_jitter(&self, rng: &mut SmallRng) -> Duration {
-        match &self.options.strategy {
-            JitterStrategy::Default { amplitude, .. } => {
-                // Generate a random duration between 0 and amplitude.
-                let millis = rng.gen_range(0..=amplitude.as_millis() as u64);
-                Duration::from_millis(millis)
-            } // Implement other strategies here.
-        }
+        let millis = rng.gen_range(0.0..=self.settings.jitter_amplitude);
+        Duration::from_millis(millis as u64)
+    }
+}
+
+impl From<&JitterSettings> for JitterInjector {
+    fn from(settings: &JitterSettings) -> Self {
+        JitterInjector { settings: settings.clone() }
     }
 }
 
 impl Clone for JitterInjector {
     fn clone(&self) -> Self {
-        Self { options: self.options.clone() }
+        Self { settings: self.settings.clone() }
     }
 }
 
@@ -79,10 +61,10 @@ impl FaultInjector for JitterInjector {
     fn inject(
         &self,
         stream: Box<dyn Bidirectional + 'static>,
-        direction: &Direction,
         _event: Box<dyn ProxyTaskEvent>,
     ) -> Box<dyn Bidirectional + 'static> {
-        Box::new(JitterStream::new(stream, self.clone(), direction))
+        let direction = self.settings.direction.clone();
+        Box::new(JitterStream::new(stream, self.clone(), &direction))
     }
 
     async fn apply_on_response(

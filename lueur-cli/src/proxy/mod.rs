@@ -22,14 +22,15 @@ use url::Url;
 use crate::config::ProxyConfig;
 use crate::errors::ProxyError;
 use crate::event::TaskManager;
-use crate::plugin::ProxyPlugin;
-use crate::plugin::builtin::load_builtin_plugins;
+use crate::fault::FaultInjector;
+use crate::plugin::CompositePlugin;
+use crate::plugin::load_injectors;
 use crate::resolver::map_localhost_to_nic;
 
 /// Shared application state
 #[derive(Debug, Clone)]
 pub struct ProxyState {
-    pub plugins: Arc<RwLock<Vec<Arc<dyn ProxyPlugin>>>>,
+    pub plugins: Arc<RwLock<CompositePlugin>>,
     pub shared_config: Arc<RwLock<ProxyConfig>>,
     pub upstream_hosts: Arc<RwLock<Vec<String>>>,
     pub stealth: bool,
@@ -38,21 +39,18 @@ pub struct ProxyState {
 impl ProxyState {
     pub fn new(stealth: bool) -> Self {
         Self {
-            plugins: Arc::new(RwLock::new(Vec::new())),
+            plugins: Arc::new(RwLock::new(CompositePlugin::empty())),
             shared_config: Arc::new(RwLock::new(ProxyConfig::default())),
             upstream_hosts: Arc::new(RwLock::new(Vec::new())),
             stealth,
         }
     }
 
-    /// Update the plugins
-    pub async fn update_plugins(
-        &self,
-        mut new_plugins: Vec<Arc<dyn ProxyPlugin>>,
-    ) {
+    /// Update the faults
+    pub async fn set_faults(&self, new_faults: Vec<Arc<dyn FaultInjector>>) {
+        tracing::debug!("Setting new faults: {:?}", new_faults);
         let mut plugins = self.plugins.write().await;
-        plugins.clear();
-        plugins.append(&mut new_plugins);
+        plugins.set_injectors(new_faults);
     }
 
     /// Update the shared configuration.
@@ -201,12 +199,9 @@ pub async fn run_proxy(
             match config_rx.changed().await {
                 Ok(_) => {
                     let new_config = config_rx.borrow_and_update().clone();
+                    let faults = load_injectors(&new_config);
                     state.update_config(new_config).await;
-                    let new_plugins =
-                        load_builtin_plugins(state.shared_config.clone())
-                            .await
-                            .unwrap();
-                    state.update_plugins(new_plugins).await;
+                    state.set_faults(faults).await;
                 }
                 Err(e) => {
                     tracing::debug!("Exited proxy config loop: {}", e);
