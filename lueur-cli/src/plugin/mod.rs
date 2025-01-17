@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use axum::async_trait;
 use axum::http;
+use metrics::MetricsInjector;
 use reqwest::ClientBuilder;
 use reqwest::Request as ReqwestRequest;
 use serde::Deserialize;
@@ -16,9 +17,13 @@ use crate::fault::Bidirectional;
 use crate::fault::FaultInjector;
 use crate::fault::bandwidth::BandwidthLimitFaultInjector;
 use crate::fault::dns::FaultyResolverInjector;
+use crate::fault::http_error::HttpResponseFaultInjector;
 use crate::fault::jitter::JitterInjector;
 use crate::fault::latency::LatencyInjector;
 use crate::fault::packet_loss::PacketLossInjector;
+use crate::types::StreamSide;
+
+pub(crate) mod metrics;
 pub(crate) mod rpc;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -75,6 +80,7 @@ impl CompositePlugin {
     pub fn set_injectors(&mut self, injectors: Vec<Arc<dyn FaultInjector>>) {
         self.injectors.clear();
         self.injectors.extend(injectors);
+        self.injectors.push(Arc::new(MetricsInjector::new()));
     }
 
     /// Creates a new CompositePlugin with no FaultInjectors.
@@ -115,6 +121,9 @@ pub fn load_injectors(config: &ProxyConfig) -> Vec<Arc<dyn FaultInjector>> {
             FaultConfig::Jitter(settings) => {
                 injectors.push(Arc::new(JitterInjector::from(settings)))
             }
+            FaultConfig::PacketDuplication(settings) => {}
+            FaultConfig::HttpError(settings) => injectors
+                .push(Arc::new(HttpResponseFaultInjector::from(settings))),
         })
         .collect();
 
@@ -180,9 +189,16 @@ impl ProxyPlugin for CompositePlugin {
         let mut modified_server_stream = server_stream;
 
         for injector in &self.injectors {
-            let client = injector.inject(modified_client_stream, event.clone());
+            tracing::debug!("Injector {}", injector);
 
-            let server = injector.inject(modified_server_stream, event.clone());
+            let mut client = modified_client_stream;
+            let mut server = modified_server_stream;
+
+            tracing::debug!("Wrapping client stream with {}", injector);
+            client = injector.inject(client, event.clone(), StreamSide::Client);
+
+            tracing::debug!("Wrapping server stream with {}", injector);
+            server = injector.inject(server, event.clone(),StreamSide::Server);
 
             modified_client_stream = client;
             modified_server_stream = server;

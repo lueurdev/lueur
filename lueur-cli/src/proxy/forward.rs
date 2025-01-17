@@ -155,9 +155,7 @@ impl Forward {
             }
         };
 
-        info!("Received response with status: {}", response.status());
-
-        let _ = event.on_response(response.status().as_u16());
+        tracing::debug!("Received response with status: {}", response.status());
 
         // Extract the response status, headers, and body
         let status = response.status();
@@ -180,7 +178,7 @@ impl Forward {
         if !passthrough {
             axum_response = {
                 let plugins_lock = plugins.read().await;
-                let mut resp = axum_response;
+                let resp = axum_response;
                 plugins_lock
                     .process_response(resp, event.clone())
                     .await
@@ -188,9 +186,12 @@ impl Forward {
             };
         }
 
-        info!("Successfully forwarded response with status: {}", status);
-
         let (new_parts, new_body) = axum_response.into_parts();
+
+        let new_status = &new_parts.status;
+        let _ = event.on_response(new_status.as_u16());
+        tracing::debug!("Forward proxy response set with status: {}", new_status);
+
         let response_bytes = new_body.len();
         let axum_response =
             AxumResponse::from_parts(new_parts, Body::from(new_body));

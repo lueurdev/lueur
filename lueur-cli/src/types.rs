@@ -58,7 +58,7 @@ pub enum Direction {
 
 impl Default for Direction {
     fn default() -> Self {
-        Self::Egress
+        Self::Ingress
     }
 }
 
@@ -87,6 +87,31 @@ impl fmt::Display for Direction {
             Direction::Ingress => write!(f, "ingress"),
             Direction::Egress => write!(f, "egress"),
             Direction::Both => write!(f, "both"),
+        }
+    }
+}
+
+
+#[derive(
+    clap::ValueEnum, Clone, Debug, Serialize, Deserialize, Eq, PartialEq,
+)]
+#[serde(rename_all = "lowercase")]
+pub enum StreamSide {
+    Client,
+    Server
+}
+
+impl Default for StreamSide {
+    fn default() -> Self {
+        Self::Server
+    }
+}
+
+impl fmt::Display for StreamSide {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            StreamSide::Client => write!(f, "client"),
+            StreamSide::Server => write!(f, "server"),
         }
     }
 }
@@ -175,6 +200,8 @@ impl BandwidthUnit {
 pub enum FaultConfiguration {
     Latency {
         distribution: Option<String>,
+        global: Option<bool>,
+        side: Option<StreamSide>,
         mean: Option<f64>,
         stddev: Option<f64>,
         min: Option<f64>,
@@ -187,11 +214,13 @@ pub enum FaultConfiguration {
         packet_loss_type: String,
         packet_loss_rate: f64,
         direction: String,
+        side: Option<StreamSide>
     },
     Bandwidth {
-        bandwidth_rate: u32,
-        bandwidth_unit: BandwidthUnit,
+        rate: u32,
+        unit: BandwidthUnit,
         direction: String,
+        side: Option<StreamSide>
     },
     Jitter {
         jitter_amplitude: f64,
@@ -207,21 +236,20 @@ pub enum FaultConfiguration {
 impl FaultConfiguration {
     pub fn build(&self) -> Result<FaultConfig, ScenarioError> {
         match self {
-            FaultConfiguration::Bandwidth {
-                bandwidth_rate,
-                bandwidth_unit,
-                direction,
-            } => {
+            FaultConfiguration::Bandwidth { rate, unit, direction, side } => {
                 let settings = config::BandwidthSettings {
                     direction: Direction::from_str(direction).unwrap(),
-                    bandwidth_rate: *bandwidth_rate as usize,
-                    bandwidth_unit: bandwidth_unit.clone(),
+                    side: side.clone().unwrap_or_default(),
+                    bandwidth_rate: *rate as usize,
+                    bandwidth_unit: unit.clone(),
                 };
 
                 Ok(FaultConfig::Bandwidth(settings))
             }
             FaultConfiguration::Latency {
                 distribution,
+                global,
+                side,
                 mean,
                 stddev,
                 min,
@@ -235,6 +263,8 @@ impl FaultConfiguration {
                         &distribution.clone().unwrap_or("normal".to_string()),
                     )
                     .unwrap(),
+                    global: global.unwrap_or(true),
+                    side: side.clone().unwrap_or_default(),
                     latency_mean: mean.unwrap_or(100.0),
                     latency_stddev: stddev.unwrap_or(20.0),
                     latency_min: min.unwrap_or(20.0),
@@ -253,9 +283,11 @@ impl FaultConfiguration {
                 packet_loss_type,
                 packet_loss_rate,
                 direction,
+                side
             } => {
                 let settings = config::PacketLossSettings {
                     direction: Direction::from_str(direction).unwrap(),
+                    side: side.clone().unwrap_or_default(),
                 };
 
                 Ok(FaultConfig::PacketLoss(settings))
@@ -288,6 +320,8 @@ impl FaultConfiguration {
         match self {
             FaultConfiguration::Latency {
                 distribution: _,
+                global: _,
+                side: _,
                 mean: _,
                 stddev: _,
                 min: _,
@@ -300,11 +334,13 @@ impl FaultConfiguration {
                 packet_loss_type: _,
                 packet_loss_rate: _,
                 direction: _,
+                side: _,
             } => "packetloss".to_string(),
             FaultConfiguration::Bandwidth {
-                bandwidth_rate: _,
-                bandwidth_unit: _,
+                rate: _,
+                unit: _,
                 direction: _,
+                side: _,
             } => "bandwidth".to_string(),
             FaultConfiguration::Jitter {
                 jitter_amplitude: _,
@@ -328,6 +364,8 @@ impl fmt::Display for FaultConfiguration {
         match self {
             FaultConfiguration::Latency {
                 distribution,
+                global,
+                side,
                 mean,
                 stddev,
                 min,
@@ -338,6 +376,9 @@ impl fmt::Display for FaultConfiguration {
             } => {
                 write!(f, "Latency Fault")?;
                 let mut details = Vec::new();
+
+                details.push(format!("Global: {}", global.unwrap_or(true)));
+                details.push(format!("Side: {}", side.clone().unwrap_or_default()));
 
                 if let Some(dist) = distribution {
                     details.push(format!("Distribution: {}", dist));
@@ -376,6 +417,7 @@ impl fmt::Display for FaultConfiguration {
                 packet_loss_type,
                 packet_loss_rate,
                 direction,
+                side: _,
             } => {
                 write!(
                     f,
@@ -385,16 +427,13 @@ impl fmt::Display for FaultConfiguration {
                     direction
                 )
             }
-            FaultConfiguration::Bandwidth {
-                bandwidth_rate,
-                bandwidth_unit,
-                direction,
-            } => {
+            FaultConfiguration::Bandwidth { rate, unit, direction, side } => {
                 write!(
                     f,
-                    "Bandwidth Fault - Rate: {} {}, Direction: {}",
-                    bandwidth_rate,
-                    bandwidth_unit.to_string(),
+                    "Bandwidth Fault - Side {}, Rate: {} {}, Direction: {}",
+                    side.clone().unwrap_or_default(),
+                    rate,
+                    unit.to_string(),
                     direction
                 )
             }

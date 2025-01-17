@@ -1,3 +1,4 @@
+use std::fmt;
 use std::io::Cursor;
 use std::io::Result as IoResult;
 use std::num::NonZeroU32;
@@ -15,24 +16,25 @@ use governor::RateLimiter;
 use governor::clock::DefaultClock;
 use governor::state::InMemoryState;
 use governor::state::direct::NotKeyed;
-use hyper::http::Response;
 use pin_project::pin_project;
 use reqwest::Body;
-use reqwest::ClientBuilder as ReqwestClientBuilder;
-use reqwest::Request as ReqwestRequest;
+use reqwest::ClientBuilder;
+use reqwest::Request;
+use tokio::io::split;
 use tokio::io::AsyncRead;
 use tokio::io::AsyncWrite;
 use tokio::io::ReadBuf;
-use tokio::io::split;
 use tokio_util::io::ReaderStream;
 
-use super::Bidirectional;
-use super::FaultInjector;
 use crate::config::BandwidthSettings;
 use crate::errors::ProxyError;
 use crate::event::FaultEvent;
 use crate::event::ProxyTaskEvent;
 use crate::types::Direction;
+use crate::types::StreamSide;
+
+use super::Bidirectional;
+use super::FaultInjector;
 
 type Limiter = RateLimiter<NotKeyed, InMemoryState, DefaultClock>;
 
@@ -47,6 +49,7 @@ pub struct BandwidthLimitedWrite<S> {
     delay: Option<Pin<Box<dyn std::future::Future<Output = ()> + Send>>>,
     event: Option<Box<dyn ProxyTaskEvent>>,
     max_write_size: usize,
+    side: StreamSide,
 }
 
 impl<S> BandwidthLimitedWrite<S>
@@ -84,6 +87,7 @@ where
             limiter: Some(Arc::new(RateLimiter::direct(quota))),
             delay: None,
             event,
+            side: settings.side,
             max_write_size: rate_bps,
         })
     }
@@ -100,6 +104,7 @@ pub struct BandwidthLimitedRead<S> {
     delay: Option<Pin<Box<dyn std::future::Future<Output = ()> + Send>>>,
     event: Option<Box<dyn ProxyTaskEvent>>,
     max_read_size: usize,
+    side: StreamSide,
 }
 
 impl<S> BandwidthLimitedRead<S>
@@ -135,6 +140,7 @@ where
             limiter: Some(Arc::new(RateLimiter::direct(quota))),
             delay: None,
             event,
+            side: settings.side,
             max_read_size: rate_bps,
         })
     }
@@ -171,9 +177,10 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for BandwidthLimitedWrite<S> {
                             if let Some(event) = &*this.event {
                                 let _ = event.on_applied(
                                     FaultEvent::Bandwidth {
+                                        direction: Direction::Egress,
+                                        side: this.side.clone(),
                                         bps: Some(written),
-                                    },
-                                    Direction::Egress,
+                                    }
                                 );
                             }
                             Poll::Ready(Ok(written))
@@ -272,8 +279,11 @@ impl<S: AsyncRead + Unpin> AsyncRead for BandwidthLimitedRead<S> {
 
                             if let Some(event) = &*this.event {
                                 let _ = event.on_applied(
-                                    FaultEvent::Bandwidth { bps: Some(filled) },
-                                    Direction::Ingress,
+                                    FaultEvent::Bandwidth {
+                                        direction: Direction::Ingress,
+                                        side: this.side.clone(),
+                                        bps: Some(filled)
+                                    }
                                 );
                             }
 
@@ -391,23 +401,31 @@ impl From<&BandwidthSettings> for BandwidthLimitFaultInjector {
     }
 }
 
+impl fmt::Display for BandwidthLimitFaultInjector {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "bandwidth")
+    }
+}
+
 #[async_trait]
 impl FaultInjector for BandwidthLimitFaultInjector {
     fn inject(
         &self,
         stream: Box<dyn Bidirectional + 'static>,
         event: Box<dyn ProxyTaskEvent>,
+        _side: StreamSide,
     ) -> Box<dyn Bidirectional + 'static> {
         let (read_half, write_half) = split(stream);
 
         let direction = self.settings.direction.clone();
-
+    
         let _ = event
-            .with_fault(FaultEvent::Bandwidth { bps: None }, direction.clone());
+            .with_fault(FaultEvent::Bandwidth { direction: direction.clone(), side: self.settings.side.clone(), bps: None });
 
         // Wrap the read half if ingress or both directions are specified
         let limited_read: Box<dyn AsyncRead + Unpin + Send> =
             if direction.is_ingress() {
+                tracing::debug!("Wrapping read half for bandwidth");
                 match BandwidthLimitedRead::new(
                     read_half,
                     self.settings.clone(),
@@ -425,6 +443,7 @@ impl FaultInjector for BandwidthLimitFaultInjector {
         // Wrap the write half if egress or both directions are specified
         let limited_write: Box<dyn AsyncWrite + Send + Unpin> =
             if direction.is_egress() {
+                tracing::debug!("Wrapping write half for bandwidth");
                 match BandwidthLimitedWrite::new(
                     write_half,
                     self.settings.clone(),
@@ -446,20 +465,20 @@ impl FaultInjector for BandwidthLimitFaultInjector {
 
     async fn apply_on_request_builder(
         &self,
-        builder: ReqwestClientBuilder,
+        builder: ClientBuilder,
         _event: Box<dyn ProxyTaskEvent>,
-    ) -> Result<ReqwestClientBuilder, ProxyError> {
+    ) -> Result<ClientBuilder, ProxyError> {
         Ok(builder)
     }
 
     /// Applies bandwidth limiting to an outgoing request.
     async fn apply_on_request(
         &self,
-        request: ReqwestRequest,
+        request: Request,
         event: Box<dyn ProxyTaskEvent>,
-    ) -> Result<ReqwestRequest, ProxyError> {
+    ) -> Result<Request, ProxyError> {
         let _ = event
-            .with_fault(FaultEvent::Bandwidth { bps: None }, Direction::Egress);
+            .with_fault(FaultEvent::Bandwidth { direction: Direction::Egress, side: StreamSide::Client, bps: None });
 
         let original_body = request.body();
         if let Some(body) = original_body {
@@ -499,8 +518,7 @@ impl FaultInjector for BandwidthLimitFaultInjector {
         event: Box<dyn ProxyTaskEvent>,
     ) -> Result<http::Response<Vec<u8>>, ProxyError> {
         let _ = event.with_fault(
-            FaultEvent::Bandwidth { bps: None },
-            Direction::Ingress,
+            FaultEvent::Bandwidth { direction: Direction::Ingress, side: StreamSide::Server, bps: None }
         );
 
         let (parts, body) = resp.into_parts();
@@ -526,7 +544,7 @@ impl FaultInjector for BandwidthLimitFaultInjector {
         let response_body = buffer.to_vec();
 
         // Reconstruct the HTTP response with the limited body
-        let mut intermediate = Response::new(response_body);
+        let mut intermediate = http::Response::new(response_body);
         *intermediate.version_mut() = version;
         *intermediate.status_mut() = status;
         *intermediate.headers_mut() = headers;

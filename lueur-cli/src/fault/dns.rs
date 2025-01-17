@@ -1,3 +1,4 @@
+use std::fmt;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -20,6 +21,7 @@ use crate::config::DnsSettings;
 use crate::event::FaultEvent;
 use crate::event::ProxyTaskEvent;
 use crate::types::Direction;
+use crate::types::StreamSide;
 
 #[derive(Debug, Clone)]
 pub enum DnsStrategy {
@@ -38,7 +40,14 @@ pub struct FaultyResolverInjector {
     inner: Arc<RwLock<TokioAsyncResolver>>,
     settings: DnsSettings,
     event: Option<Box<dyn ProxyTaskEvent>>,
+    side: StreamSide,
     rng: SmallRng,
+}
+
+impl fmt::Display for FaultyResolverInjector {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "dns")
+    }
 }
 
 impl From<&DnsSettings> for FaultyResolverInjector {
@@ -51,6 +60,7 @@ impl From<&DnsSettings> for FaultyResolverInjector {
             inner: Arc::new(RwLock::new(resolver)),
             settings: settings.clone(),
             event: None,
+            side: StreamSide::Client,
             rng: SmallRng::from_entropy(),
         }
     }
@@ -78,8 +88,7 @@ impl Resolve for FaultyResolverInjector {
             if apply_fault {
                 let _ = match self_clone.event {
                     Some(event) => event.with_fault(
-                        FaultEvent::Dns { triggered: Some(true) },
-                        Direction::Egress,
+                        FaultEvent::Dns { direction: Direction::Egress, side: self_clone.side.clone(), triggered: Some(true) },
                     ),
                     None => Ok(()),
                 };
@@ -92,8 +101,7 @@ impl Resolve for FaultyResolverInjector {
 
             let _ = match self_clone.event {
                 Some(event) => event.with_fault(
-                    FaultEvent::Dns { triggered: Some(false) },
-                    Direction::Egress,
+                    FaultEvent::Dns { direction: Direction::Egress, side: self_clone.side.clone(), triggered: Some(false) },
                 ),
                 None => Ok(()),
             };
@@ -116,6 +124,7 @@ impl FaultInjector for FaultyResolverInjector {
         &self,
         stream: Box<dyn Bidirectional + 'static>,
         _event: Box<dyn ProxyTaskEvent>,
+        _side: StreamSide,
     ) -> Box<dyn Bidirectional + 'static> {
         stream
     }

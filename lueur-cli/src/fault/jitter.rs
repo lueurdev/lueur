@@ -1,5 +1,6 @@
 // src/fault/jitter.rs
 
+use std::fmt;
 use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
@@ -22,12 +23,19 @@ use super::FaultInjector;
 use crate::config::JitterSettings;
 use crate::event::ProxyTaskEvent;
 use crate::types::Direction;
+use crate::types::StreamSide;
 
 /// Jitter Injector that introduces variable delays based on amplitude and
 /// frequency.
 #[derive(Debug)]
 pub struct JitterInjector {
     settings: JitterSettings,
+}
+
+impl fmt::Display for JitterInjector {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "jitter")
+    }
 }
 
 impl JitterInjector {
@@ -62,6 +70,7 @@ impl FaultInjector for JitterInjector {
         &self,
         stream: Box<dyn Bidirectional + 'static>,
         _event: Box<dyn ProxyTaskEvent>,
+        _side: StreamSide,
     ) -> Box<dyn Bidirectional + 'static> {
         let direction = self.settings.direction.clone();
         Box::new(JitterStream::new(stream, self.clone(), &direction))

@@ -15,6 +15,7 @@ use tokio::sync::broadcast::Sender;
 use tokio::sync::broadcast::error::SendError;
 
 use crate::types::Direction;
+use crate::types::StreamSide;
 
 #[derive(Debug, Clone)]
 pub enum TaskProgressEvent {
@@ -27,7 +28,6 @@ pub enum TaskProgressEvent {
         id: TaskId,
         ts: Instant,
         fault: FaultEvent,
-        direction: Direction,
     },
     IpResolved {
         id: TaskId,
@@ -39,7 +39,10 @@ pub enum TaskProgressEvent {
         id: TaskId,
         ts: Instant,
         fault: FaultEvent,
-        direction: Direction,
+    },
+    TTFB {
+        id: TaskId,
+        ts: Instant,
     },
     ResponseReceived {
         id: TaskId,
@@ -73,7 +76,6 @@ pub trait ProxyTaskEvent: Send + Sync + std::fmt::Debug {
     fn with_fault(
         &self,
         fault: FaultEvent,
-        direction: Direction,
     ) -> Result<(), SendError<TaskProgressEvent>>;
 
     fn on_resolved(
@@ -89,10 +91,13 @@ pub trait ProxyTaskEvent: Send + Sync + std::fmt::Debug {
         from_upstream_length: u64,
     ) -> Result<(), SendError<TaskProgressEvent>>;
 
+    fn on_first_byte(
+        &self,
+    ) -> Result<(), SendError<TaskProgressEvent>>;
+
     fn on_applied(
         &self,
         fault: FaultEvent,
-        direction: Direction,
     ) -> Result<(), SendError<TaskProgressEvent>>;
 
     fn on_response(
@@ -135,13 +140,11 @@ impl ProxyTaskEvent for FaultTaskEvent {
     fn with_fault(
         &self,
         fault: FaultEvent,
-        direction: Direction,
     ) -> Result<(), SendError<TaskProgressEvent>> {
         let event: TaskProgressEvent = TaskProgressEvent::WithFault {
             id: self.id,
             ts: Instant::now(),
             fault,
-            direction,
         };
         let sender = self.sender.clone();
         let _ = sender.send(event);
@@ -182,16 +185,26 @@ impl ProxyTaskEvent for FaultTaskEvent {
         Ok(())
     }
 
+    fn on_first_byte(
+        &self,
+    ) -> Result<(), SendError<TaskProgressEvent>> {
+        let event: TaskProgressEvent = TaskProgressEvent::TTFB {
+            id: self.id,
+            ts: Instant::now(),
+        };
+        let sender = self.sender.clone();
+        let _ = sender.send(event);
+        Ok(())
+    }
+
     fn on_applied(
         &self,
         fault: FaultEvent,
-        direction: Direction,
     ) -> Result<(), SendError<TaskProgressEvent>> {
         let event: TaskProgressEvent = TaskProgressEvent::FaultApplied {
             id: self.id,
             ts: Instant::now(),
             fault,
-            direction,
         };
         let sender = self.sender.clone();
         let _ = sender.send(event);
@@ -248,7 +261,6 @@ impl ProxyTaskEvent for PassthroughTaskEvent {
     fn with_fault(
         &self,
         _fault: FaultEvent,
-        _direction: Direction,
     ) -> Result<(), SendError<TaskProgressEvent>> {
         Ok(())
     }
@@ -270,10 +282,15 @@ impl ProxyTaskEvent for PassthroughTaskEvent {
         Ok(())
     }
 
+    fn on_first_byte(
+        &self,
+    ) -> Result<(), SendError<TaskProgressEvent>> {
+        Ok(())
+    }
+
     fn on_applied(
         &self,
         _fault: FaultEvent,
-        _direction: Direction,
     ) -> Result<(), SendError<TaskProgressEvent>> {
         Ok(())
     }
@@ -340,37 +357,61 @@ impl TaskManager {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum FaultEvent {
     Latency {
+        direction: Direction,
+        side: StreamSide,
+
         #[serde(serialize_with = "serialize_duration_as_millis_f64")]
         delay: Option<Duration>,
     },
     Dns {
+        direction: Direction,
+        side: StreamSide,
         triggered: Option<bool>,
     },
     Bandwidth {
+        direction: Direction,
+        side: StreamSide,
         bps: Option<usize>,
     },
     Jitter {
+        direction: Direction,
+        side: StreamSide,
         #[serde(serialize_with = "serialize_duration_as_millis_f64")]
         amplitude: Option<Duration>,
         frequency: Option<f64>,
     },
-    PacketLoss {},
+    PacketLoss {
+        direction: Direction,
+        side: StreamSide,
+    },
+    HttpResponseFault {
+        direction: Direction,
+        side: StreamSide,
+        status_code: u16,
+        response_body: Option<String>,
+    },
 }
 
 impl FaultEvent {
     pub fn event_type(&self) -> String {
         match self {
-            FaultEvent::Latency { delay: _ } => "latency".to_string(),
-            FaultEvent::Dns { triggered: _ } => "dns".to_string(),
-            FaultEvent::Bandwidth { bps: _ } => "bandwidth".to_string(),
-            FaultEvent::Jitter { amplitude: _, frequency: _ } => {
+            FaultEvent::Latency { direction:_, side: _, delay: _ } => "latency".to_string(),
+            FaultEvent::Dns { direction:_, side: _, triggered: _ } => "dns".to_string(),
+            FaultEvent::Bandwidth { direction:_, side: _, bps: _ } => "bandwidth".to_string(),
+            FaultEvent::Jitter { direction:_, side: _, amplitude: _, frequency: _ } => {
                 "jitter".to_string()
             }
-            FaultEvent::PacketLoss {} => "packetloss".to_string(),
+            FaultEvent::PacketLoss {direction:_, side: _} => "packetloss".to_string(),
+            FaultEvent::HttpResponseFault {
+                direction:_, 
+                side: _, 
+                status_code: _,
+                response_body: _,
+            } => "httperror".to_string(),
         }
     }
 }

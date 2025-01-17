@@ -11,7 +11,6 @@ use axum::http::Request as AxumRequest;
 use axum::http::Response as AxumResponse;
 use hyper_util::rt::TokioIo;
 use tokio::io::AsyncWriteExt;
-use tokio::io::copy_bidirectional;
 use tokio::io::split;
 use tokio::net::TcpStream;
 use tokio::sync::Mutex;

@@ -7,10 +7,9 @@ scenarios:
     context:
       upstreams:
         - https://postman-echo.com
-      fault:
-        type: latency
-        mean: 10
-        direction: egress
+      faults:
+        - type: latency
+          mean: 50
       strategy:
         mode: Repeat
         failfast: true
@@ -19,17 +18,21 @@ scenarios:
         wait: 100
     expect:
       status: 200
-      response_time_under: 200
+      response_time_under: 500
   - call:
       method: GET
       url: http://localhost:7070/
     context:
       upstreams:
         - http://localhost:7070
-      fault:
-        type: latency
-        mean: 300
-        max: 500
+      faults:
+        - type: latency
+          mean: 300
+          max: 500
+        - type: bandwidth
+          rate: 1
+          unit: KBps
+          direction: ingress
     expect:
       status: 200
       response_time_under: 500
@@ -40,10 +43,10 @@ scenarios:
       upstreams:
         - https://postman-echo.com
         - https://www.example.com
-      fault:
-        type: latency
-        mean: 300
-        max: 500
+      faults:
+        - type: latency
+          mean: 300
+          max: 500
     expect:
       status: 200
       response_time_under: 1000
@@ -54,10 +57,10 @@ scenarios:
       upstreams:
         - https://postman-echo.com
         - https://www.example.com
-      fault:
-        type: latency
-        mean: 300
-        max: 500
+      faults:
+        - type: latency
+          mean: 300
+          max: 500
     expect:
       status: 200
       response_time_under: 1000

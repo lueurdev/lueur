@@ -62,7 +62,7 @@ impl ProxyState {
 
     /// Update the upstream hosts.
     pub async fn update_upstream_hosts(&self, new_hosts: Vec<String>) {
-        tracing::info!("Allowed hosts {:?}", new_hosts);
+        tracing::debug!("Allowed hosts {:?}", new_hosts);
         let mut hosts = self.upstream_hosts.write().await;
         *hosts = new_hosts;
     }
@@ -148,7 +148,7 @@ pub async fn run_proxy(
             tracing::debug!("Upstream {}", upstream_url);
 
             if method == Method::CONNECT {
-                tracing::info!("Processing tunnel request to {}", upstream_url);
+                tracing::debug!("Processing tunnel request to {}", upstream_url);
                 let r = tunnel::handle_connect(
                     req,
                     state.clone(),
@@ -164,7 +164,7 @@ pub async fn run_proxy(
                 };
                 Ok(resp)
             } else {
-                tracing::info!(
+                tracing::debug!(
                     "Processing forward request to {}",
                     upstream_url
                 );

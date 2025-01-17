@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::time::Duration;
+use std::time::Instant;
 
 use colored::*;
 use indicatif::MultiProgress;
@@ -18,7 +19,9 @@ struct TaskInfo {
     pb: ProgressBar,
     url: String,
     resolution_time: f64,
-    fault: Option<FaultEvent>,
+    started: Instant,
+    ttfb: Option<Duration>,
+    faults: Vec<FaultEvent>,
     status_code: Option<u16>,
     events: Vec<FaultEvent>,
 }
@@ -43,7 +46,7 @@ pub async fn handle_displayable_events(
                 match event {
                     Ok(event) => {
                         match event {
-                            TaskProgressEvent::Started { id, ts: _, url } => {
+                            TaskProgressEvent::Started { id, ts, url } => {
                                 let pb = multi.add(ProgressBar::new_spinner());
                                 pb.set_style(style.clone());
                                 pb.enable_steady_tick(Duration::from_millis(80));
@@ -53,7 +56,7 @@ pub async fn handle_displayable_events(
                                 pb.set_message(m);
 
                                 let task_info =
-                                    TaskInfo { pb, url, resolution_time: 0.0, fault: None, status_code: None, events: Vec::new() };
+                                    TaskInfo { pb, url, resolution_time: 0.0, faults: Vec::new(), status_code: None, events: Vec::new(), started: ts, ttfb: None };
                                 task_map.insert(id, task_info);
                             }
                             TaskProgressEvent::IpResolved { id, ts: _, domain: _, time_taken } => {
@@ -61,33 +64,40 @@ pub async fn handle_displayable_events(
                                     task_info.resolution_time = time_taken;
 
                                     let u = format!("{} {}", "URL:".dimmed(), task_info.url.bright_blue());
-                                    let d = format!("{} {}ms", "DNS:".dimmed(), time_taken);
+                                    let d = format!("{} {:.3}ms", "DNS:".dimmed(), time_taken);
 
                                     task_info.pb.set_message(format!("{} | {} | ...", u, d));
                                 }
                             },
-                            TaskProgressEvent::WithFault { id, ts: _, fault, direction: _ } => {
+                            TaskProgressEvent::WithFault { id, ts: _, fault } => {
                                 if let Some(task_info) = task_map.get_mut(&id) {
-                                    task_info.fault = Some(fault.clone());
+                                    task_info.faults.push(fault.clone());
 
                                     let u = format!("{} {}", "URL:".dimmed(), task_info.url.bright_blue());
-                                    let d = format!("{} {}ms", "DNS:".dimmed(), task_info.resolution_time);
-                                    let f = fault_to_string(&task_info.fault);
+                                    let d = format!("{} {:.3}ms", "DNS:".dimmed(), task_info.resolution_time);
+                                    let f = fault_to_string(&task_info.faults);
 
+                                    tracing::info!("With fault {}", f);
                                     task_info.pb.set_message(format!("{} | {} | {} | ...", u, d, f));
                                 }
                             }
-                            TaskProgressEvent::FaultApplied { id, ts: _, fault, direction } => {
+                            TaskProgressEvent::TTFB { id, ts: _ } => {
                                 if let Some(task_info) = task_map.get_mut(&id) {
+                                    task_info.ttfb = Some(task_info.started.elapsed());
+                                }
+                            }
+                            TaskProgressEvent::FaultApplied { id, ts: _, fault } => {
+                                if let Some(task_info) = task_map.get_mut(&id) {
+                                    task_info.events.push(fault.clone());
+                                    let mut fault_results = String::new();
 
-                                    if let FaultEvent::Latency { delay } = &fault {
-                                        task_info.events.push(fault.clone());
-                                        if let Some(latency) = delay {
+                                    for fault in task_info.faults.clone() {
+                                        if let FaultEvent::Latency { direction, side, delay } = &fault {
                                             let max_events = 20;
 
                                             let sparkline: String = task_info.events.iter()
                                                 .filter_map(|f| {
-                                                    if let FaultEvent::Latency { delay: Some(d) } = f {
+                                                    if let FaultEvent::Latency { direction, side, delay: Some(d) } = f {
                                                         Some(latency_to_sparkline_char(*d))
                                                     } else {
                                                         None
@@ -100,36 +110,42 @@ pub async fn handle_displayable_events(
                                                 .rev()
                                                 .map(|c| c.to_string())
                                                 .collect();
+                                            fault_results.push_str(&format!("{} {}{: <28}", format!("{} latency", side).yellow(), direction_character(direction.clone()), &sparkline));
+                                        } else
+                                        if let FaultEvent::Bandwidth { direction, side, bps } = &fault {
 
-                                            let u = format!("{} {}", "URL:".dimmed(), task_info.url.bright_blue());
-                                            let d = format!("{} {}ms", "DNS:".dimmed(), task_info.resolution_time);
-                                            let f = fault_to_string(&task_info.fault);
+                                            let count = task_info.events.len();
+                                            let mut bandwidth = 0;
+                                            if count > 0 {
+                                                let total: usize = task_info.events.iter()
+                                                .map(|f| {
+                                                    if let FaultEvent::Bandwidth { direction, side: _, bps: Some(d) } = f {
+                                                        *d
+                                                    } else {
+                                                        0
+                                                    }
+                                                })
+                                                .collect::<Vec<usize>>()
+                                                .iter()
+                                                .sum();
 
-                                            task_info.pb.set_message(format!("{} | {} | {} | {} | ...", u, d, f, sparkline));
+                                                bandwidth = total / count;
+                                            }
+
+                                            let formatted_rate = format!("{}{}", direction_character(direction.clone()), format_bandwidth(bandwidth as usize));
+                                            fault_results.push_str(&format!(" {} {}", format!("{} bandwidth", side).yellow(), &formatted_rate));
+                                        } else
+                                        if let FaultEvent::PacketLoss {direction, side} = &fault {
+                                            let formatted_rate = "".to_string();
+                                            fault_results.push_str(&format!(" {} {}", format!("{} packet loss", side).yellow(), &formatted_rate));
                                         }
-                                    } else
-                                    if let FaultEvent::Bandwidth { bps } = &fault {
-                                        task_info.events.push(fault.clone());
-                                        if let Some(rate) = bps {
-                                            let formatted_rate = format!("{}{}", direction_character(direction), format_bandwidth(*rate));
 
-                                            let u = format!("{} {}", "URL:".dimmed(), task_info.url.bright_blue());
-                                            let d = format!("{} {}ms", "DNS:".dimmed(), task_info.resolution_time);
-                                            let f = fault_to_string(&task_info.fault);
-
-                                            task_info.pb.set_message(format!("{} | {} | {} | {} | ...", u, d, f, formatted_rate));
-                                        }
-                                    } else
-                                    if let FaultEvent::PacketLoss { } = &fault {
-                                        task_info.events.push(fault.clone());
-                                        let formatted_rate = "".to_string();
-
-                                        let u = format!("{} {}", "URL:".dimmed(), task_info.url.bright_blue());
-                                        let d = format!("{} {}ms", "DNS:".dimmed(), task_info.resolution_time);
-                                        let f = fault_to_string(&task_info.fault);
-
-                                        task_info.pb.set_message(format!("{} | {} | {} | {} | ...", u, d, f, formatted_rate));
+                                        fault_results.push_str("");
                                     }
+                                    tracing::info!("{}", fault_results);
+                                    let u = format!("{} {}", "URL:".dimmed(), task_info.url.bright_blue());
+                                    let d = format!("{} {:.3}ms", "DNS:".dimmed(), task_info.resolution_time);
+                                    task_info.pb.set_message(format!("{} | {} | {} | ...", u, d, fault_results));
                                 }
                             }
                             TaskProgressEvent::ResponseReceived { id, ts: _, status_code } => {
@@ -149,8 +165,8 @@ pub async fn handle_displayable_events(
 
                                     task_info.status_code = Some(status_code);
                                     let u = format!("{} {}", "URL:".dimmed(), task_info.url.bright_blue());
-                                    let d = format!("{} {}ms", "DNS:".dimmed(), task_info.resolution_time);
-                                    let f = fault_to_string(&task_info.fault);
+                                    let d = format!("{} {:.3}ms", "DNS:".dimmed(), task_info.resolution_time);
+                                    let f = format!("{} {}", "Faults:".dimmed(), fault_to_string(&task_info.faults).yellow());
 
                                     task_info.pb.set_message(format!("{} | {} | {} | {}", u, d, f, s));
                                 }
@@ -178,73 +194,103 @@ pub async fn handle_displayable_events(
 
                                     let s = format!("{} {}", c, m);
                                     let u = format!("{} {}", "URL:".dimmed(), task_info.url.bright_blue());
-                                    let d = format!("{} {}ms", "DNS:".dimmed(), task_info.resolution_time);
+                                    let d = format!("{} {:.3}ms", "DNS:".dimmed(), task_info.resolution_time);
 
-                                    let mut t: String = task_info.events.iter()
-                                        .filter_map(|f| {
-                                            if let FaultEvent::Latency { delay: Some(d) } = f {
-                                                Some(latency_to_sparkline_char(*d))
-                                            } else {
-                                                None
-                                            }
-                                        })
-                                        .rev()
-                                        .take(20)
-                                        .collect::<Vec<_>>()
-                                        .iter()
-                                        .rev()
-                                        .map(|c| c.to_string())
-                                        .collect();
+                                    let mut fault_results = String::new();
 
-                                    if let Some(fault) = &task_info.fault {
-                                        if let FaultEvent::Bandwidth { bps: _ } = &fault {
-                                            let v: Vec<usize> = task_info.events.iter()
-                                                .map(|f| {
-                                                    if let FaultEvent::Bandwidth { bps: Some(d) } = f { *d } else { 0 }
+                                    for fault in task_info.faults.clone() {
+                                        if let FaultEvent::Latency { direction, side, delay } = &fault {
+                                            /*let max_events = 20;
+
+                                            let sparkline: String = task_info.events.iter()
+                                                .filter_map(|f| {
+                                                    if let FaultEvent::Latency { direction, side, delay: Some(d) } = f {
+                                                        Some(latency_to_sparkline_char(*d))
+                                                    } else {
+                                                        None
+                                                    }
                                                 })
+                                                .rev()
+                                                .take(max_events)
+                                                .collect::<Vec<_>>()
+                                                .iter()
+                                                .rev()
+                                                .map(|c| c.to_string())
                                                 .collect();
+                                            fault_results.push_str(&format!("{} {}{} ", format!("{} latency", side).yellow(), "".to_string(), &sparkline));
+                                            */
+                                            let mut latency = 0.0;
+                                            if task_info.events.len() > 0 {
+                                                let mut count = 0;
+                                                let total: f64 = task_info.events.iter()
+                                                .map(|f| {
+                                                    if let FaultEvent::Latency { direction, side, delay: Some(d) } = f {
+                                                        count += 1;
+                                                        d.as_millis_f64()
+                                                    } else {
+                                                        0.0
+                                                    }
+                                                })
+                                                .collect::<Vec<f64>>()
+                                                .iter()
+                                                .sum();
 
-                                            let sum = v.iter().sum::<usize>() as usize;
-                                            let count = v.len();
-                                            if count > 0 {
-                                                t = format!("~{}", format_bandwidth(sum/count as usize));
+                                                latency = total / count as f64;
                                             }
+
+                                            fault_results.push_str(&format!("{} {:.3}ms", format!("{} {} latency", side, direction).yellow(), latency));
                                         } else
-                                        if let FaultEvent::Bandwidth { bps } = &fault {
-                                            if let Some(rate) = bps {
-                                                let formatted_rate = format!("{}" , format_bandwidth(*rate));
+                                        if let FaultEvent::Bandwidth { direction, side, bps } = &fault {
 
-                                                let u = format!("{} {}", "URL:".dimmed(), task_info.url.bright_blue());
-                                                let d = format!("{} {}ms", "DNS:".dimmed(), task_info.resolution_time);
-                                                let f = fault_to_string(&task_info.fault);
+                                            let mut bandwidth = 0;
+                                            if task_info.events.len() > 0 {
+                                                let mut count = 0;
+                                                let total: usize = task_info.events.iter()
+                                                .map(|f| {
+                                                    if let FaultEvent::Bandwidth { direction, side: _, bps: Some(d) } = f {
+                                                        count += 1;
+                                                        *d
+                                                    } else {
+                                                        0
+                                                    }
+                                                })
+                                                .collect::<Vec<usize>>()
+                                                .iter()
+                                                .sum();
 
-                                                task_info.pb.set_message(format!("{} | {} | {} | {} | ...", u, d, f, formatted_rate));
+                                                bandwidth = total / count;
                                             }
+
+                                            let formatted_rate = format!("{}{}", "".to_string(), format_bandwidth(bandwidth as usize));
+                                            fault_results.push_str(&format!(" {} {}", format!("{} bandwidth", side).yellow(), &formatted_rate));
                                         } else
-                                        if let FaultEvent::PacketLoss { } = &fault {
+                                        if let FaultEvent::PacketLoss {direction, side} = &fault {
                                             let formatted_rate = "".to_string();
-
-                                            let u = format!("{} {}", "URL:".dimmed(), task_info.url.bright_blue());
-                                            let d = format!("{} {}ms", "DNS:".dimmed(), task_info.resolution_time);
-                                            let f = fault_to_string(&task_info.fault);
-
-                                            task_info.pb.set_message(format!("{} | {} | {} | {} | ...", u, d, f, formatted_rate));
+                                            fault_results.push_str(&format!(" {} {}", format!("{} packet loss", side).yellow(), &formatted_rate));
                                         }
+
+                                        fault_results.push_str("");
                                     }
 
-                                    let f = fault_to_string(&task_info.fault);
+                                    let ttfb = match task_info.ttfb {
+                                        Some(d) => format!("{:.3}", d.as_millis_f64()),
+                                        None => "-".to_string()
+                                    };
+
                                     let h = format!(
-                                        "{} {:.2}ms | {} ⭫{}/b ⭭{}/b",
+                                        "{} {:.3}ms | {} {}ms | {} ⭫{}/b ⭭{}/b",
                                         "Duration:".dimmed(),
-                                        time_taken.as_millis_f64(),
+                                        task_info.started.elapsed().as_millis_f64(),
+                                        "TTFB".dimmed(),
+                                        ttfb,
                                         "Sent/Received:".dimmed(),
                                         from_downstream_length,
                                         from_upstream_length
                                     );
 
                                     task_info.pb.finish_with_message(format!(
-                                        "{} | {} | {} | {} | {} | {} |",
-                                        u, d, f, t, s, h
+                                        "{} | {} | {} | {} | {} |",
+                                        u, d, fault_results, s, h
                                     ));
                                 }
                             }
@@ -252,7 +298,7 @@ pub async fn handle_displayable_events(
                                 if let Some(task_info) = task_map.remove(&id) {
                                     let u = format!("{} {}", "URL:".dimmed(), task_info.url.bright_blue());
                                     let d = format!("{} {:.2}ms", "DNS:".dimmed(), task_info.resolution_time);
-                                    let f = fault_to_string(&task_info.fault);
+                                    let f = fault_to_string(&task_info.faults);
                                     let e = format!("{} {}", "Failed:".red(), error);
 
                                     task_info
@@ -277,46 +323,29 @@ pub async fn handle_displayable_events(
     multi.clear().unwrap();
 }
 
-fn fault_to_string(fault: &Option<FaultEvent>) -> String {
-    match fault {
-        Some(fault) => match fault {
-            FaultEvent::Latency { delay: _ } => {
-                let c = "Fault:".dimmed();
-                let f = "latency".yellow();
-                format!("{} {}", c, f)
+fn fault_to_string(faults: &Vec<FaultEvent>) -> String {
+    let mut b = Vec::new();
+
+    for fault in faults {
+        let f = match fault {
+            FaultEvent::Latency { direction, side, delay: _ } => format!("{} latency", side),
+            FaultEvent::Dns { direction, side, triggered: _ } => format!("{} dns", side),
+            FaultEvent::Bandwidth { direction, side, bps: _ } => format!("{} bandwidth", side),
+            FaultEvent::Jitter { direction, side, amplitude: _, frequency: _ } => {
+                format!("{} jitter", side)
             }
-            FaultEvent::Dns { triggered } => {
-                let c = "Fault:".dimmed();
-                let f = "dns".yellow();
-                format!(
-                    "{} {} {}",
-                    c,
-                    f,
-                    if triggered.unwrap() {
-                        "triggered".to_string()
-                    } else {
-                        "not triggered".to_string()
-                    }
-                )
-            }
-            FaultEvent::Bandwidth { bps: _ } => {
-                let c = "Fault:".dimmed();
-                let f = "bandwidth".yellow();
-                format!("{} {}", c, f)
-            }
-            FaultEvent::Jitter { amplitude: _, frequency: _ } => {
-                let c = "Fault:".dimmed();
-                let f = "jitter".yellow();
-                format!("{} {}", c, f)
-            }
-            FaultEvent::PacketLoss {} => {
-                let c = "Fault:".dimmed();
-                let f = "packet loss".yellow();
-                format!("{} {}", c, f)
-            }
-        },
-        None => "".to_string(),
+            FaultEvent::PacketLoss {direction, side} => format!("{} packet loss", side),
+            FaultEvent::HttpResponseFault {
+                direction, 
+                side,
+                status_code: _,
+                response_body: _,
+            } => format!("{} http error", side),
+        };
+        b.push(f);
     }
+
+    b.join(", ")
 }
 
 /// Maps a latency duration to a colored Unicode character for the sparkline.

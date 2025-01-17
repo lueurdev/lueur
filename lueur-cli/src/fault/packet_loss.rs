@@ -1,3 +1,4 @@
+use std::fmt;
 use std::io::Cursor;
 use std::io::Result as IoResult;
 use std::pin::Pin;
@@ -27,6 +28,7 @@ use crate::errors::ProxyError;
 use crate::event::FaultEvent;
 use crate::event::ProxyTaskEvent;
 use crate::types::Direction;
+use crate::types::StreamSide;
 
 /// Enumeration of packet loss strategies.
 #[derive(Debug, Clone)]
@@ -118,6 +120,7 @@ pub struct PacketLossLimitedRead<S> {
     transition_matrix: Option<Vec<Vec<f64>>>, // Only for MultiStateMarkov
     loss_probabilities: Option<Vec<f64>>,     // Only for MultiStateMarkov
     event: Option<Box<dyn ProxyTaskEvent>>,
+    side: StreamSide,
     rng: SmallRng,
 }
 
@@ -152,6 +155,7 @@ impl<S> PacketLossLimitedRead<S> {
             transition_matrix,
             loss_probabilities,
             event,
+            side: settings.side.clone(),
             rng: SmallRng::from_entropy(),
         }
     }
@@ -199,7 +203,7 @@ where
             // bytes
             if let Some(event) = &*this.event {
                 let _ = event
-                    .on_applied(FaultEvent::PacketLoss {}, Direction::Ingress);
+                    .on_applied(FaultEvent::PacketLoss { direction: Direction::Ingress, side: this.side.clone() });
             }
             buf.advance(0);
             Poll::Ready(Ok(()))
@@ -221,6 +225,7 @@ pub struct PacketLossLimitedWrite<S> {
     transition_matrix: Option<Vec<Vec<f64>>>, // Only for MultiStateMarkov
     loss_probabilities: Option<Vec<f64>>,     // Only for MultiStateMarkov
     event: Option<Box<dyn ProxyTaskEvent>>,
+    side: StreamSide,
     rng: SmallRng,
 }
 
@@ -255,6 +260,7 @@ impl<S> PacketLossLimitedWrite<S> {
             transition_matrix,
             loss_probabilities,
             event,
+            side: settings.side.clone(),
             rng: SmallRng::from_entropy(),
         }
     }
@@ -302,7 +308,7 @@ where
             // bytes
             if let Some(event) = &*this.event {
                 let _ = event
-                    .on_applied(FaultEvent::PacketLoss {}, Direction::Egress);
+                    .on_applied(FaultEvent::PacketLoss { direction: Direction::Egress, side: this.side.clone() });
             }
             Poll::Ready(Ok(0))
         } else {
@@ -402,6 +408,12 @@ impl From<&PacketLossSettings> for PacketLossInjector {
     }
 }
 
+impl fmt::Display for PacketLossInjector {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "packet-loss")
+    }
+}
+
 #[async_trait]
 impl FaultInjector for PacketLossInjector {
     /// Injects packet loss into a bidirectional stream based on the direction.
@@ -409,31 +421,23 @@ impl FaultInjector for PacketLossInjector {
         &self,
         stream: Box<dyn Bidirectional + 'static>,
         event: Box<dyn ProxyTaskEvent>,
+        _side: StreamSide,
     ) -> Box<dyn Bidirectional + 'static> {
         let (read_half, write_half) = split(stream);
 
         let direction = self.settings.direction.clone();
+        let side = self.settings.side.clone();
 
-        let _ = event.with_fault(FaultEvent::PacketLoss {}, direction.clone());
-
-        // Notify the event handler about the applied packet loss fault
-        if direction.is_ingress() {
-            let _ =
-                event.on_applied(FaultEvent::PacketLoss {}, Direction::Ingress);
-        }
-
-        if direction.is_egress() {
-            let _ =
-                event.on_applied(FaultEvent::PacketLoss {}, Direction::Egress);
-        }
+        let _ = event.with_fault(FaultEvent::PacketLoss { direction: direction.clone(), side: side.clone() });
 
         // Wrap the read half if ingress or both directions are specified
         let limited_read: Box<dyn AsyncRead + Unpin + Send> =
             if direction.is_ingress() {
+                tracing::debug!("Wrapping read half for packet loss");
                 Box::new(PacketLossLimitedRead::new(
                     read_half,
                     self.settings.clone(),
-                    Some(event.clone()),
+                    Some(event.clone())
                 ))
             } else {
                 Box::new(read_half) as Box<dyn AsyncRead + Unpin + Send>
@@ -442,10 +446,11 @@ impl FaultInjector for PacketLossInjector {
         // Wrap the write half if egress or both directions are specified
         let limited_write: Box<dyn AsyncWrite + Unpin + Send> =
             if direction.is_egress() {
+                tracing::debug!("Wrapping write half for packet loss");
                 Box::new(PacketLossLimitedWrite::new(
                     write_half,
                     self.settings.clone(),
-                    Some(event.clone()),
+                    Some(event.clone())
                 ))
             } else {
                 Box::new(write_half) as Box<dyn AsyncWrite + Unpin + Send>
@@ -475,7 +480,7 @@ impl FaultInjector for PacketLossInjector {
         request: ReqwestRequest,
         event: Box<dyn ProxyTaskEvent>,
     ) -> Result<ReqwestRequest, ProxyError> {
-        let _ = event.with_fault(FaultEvent::PacketLoss {}, Direction::Egress);
+        let _ = event.with_fault(FaultEvent::PacketLoss {direction: Direction::Egress, side: StreamSide::Client });
 
         let original_body = request.body();
         if let Some(body) = original_body {
@@ -516,7 +521,7 @@ impl FaultInjector for PacketLossInjector {
         resp: http::Response<Vec<u8>>,
         event: Box<dyn ProxyTaskEvent>,
     ) -> Result<http::Response<Vec<u8>>, ProxyError> {
-        let _ = event.with_fault(FaultEvent::PacketLoss {}, Direction::Ingress);
+        let _ = event.with_fault(FaultEvent::PacketLoss { direction: Direction::Ingress, side: StreamSide::Server });
 
         // Split the response into parts and body
         let (parts, body) = resp.into_parts();

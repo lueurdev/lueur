@@ -5,6 +5,7 @@ use reqwest::Request as ReqwestRequest;
 
 pub mod bandwidth;
 pub mod dns;
+pub mod http_error;
 pub mod jitter;
 pub mod latency;
 pub mod packet_loss;
@@ -16,7 +17,7 @@ use tokio::io::AsyncWrite as TokioAsyncWrite;
 
 use crate::errors::ProxyError;
 use crate::event::ProxyTaskEvent;
-use crate::types::Direction;
+use crate::types::StreamSide;
 
 /// A composite trait that combines AsyncRead, AsyncWrite, Unpin, and Send.
 pub trait Bidirectional:
@@ -30,11 +31,12 @@ impl<T> Bidirectional for T where
 }
 
 #[async_trait]
-pub trait FaultInjector: Send + Sync + std::fmt::Debug {
+pub trait FaultInjector: Send + Sync + std::fmt::Debug + std::fmt::Display {
     fn inject(
         &self,
         stream: Box<dyn Bidirectional + 'static>,
         _event: Box<dyn ProxyTaskEvent>,
+        _side: StreamSide,
     ) -> Box<dyn Bidirectional + 'static>;
 
     async fn apply_on_request_builder(

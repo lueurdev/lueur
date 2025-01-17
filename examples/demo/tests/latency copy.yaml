@@ -7,10 +7,10 @@ scenarios:
     context:
       upstreams:
         - http://localhost:7070
-      fault:
-        type: latency
-        mean: 300
-        max: 500
+      faults:
+        - type: latency
+          mean: 300
+          max: 500
     expect:
       status: 200
       response_time_under: 500

@@ -8,6 +8,7 @@ use crate::types::BandwidthUnit;
 use crate::types::Direction;
 use crate::types::LatencyDistribution;
 use crate::types::PacketLossType;
+use crate::types::StreamSide;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -121,11 +122,32 @@ pub struct LatencyOptions {
     )]
     pub enabled: bool,
 
+    /// Global or per-operation (read/write)
+    #[arg(
+        help_heading = "Latency Options",
+        name = "latency_global",
+        action,
+        long,
+        default_value_t = true,
+        help = "Apply a global latency rather than a per write/read operation.",
+    )]
+    pub global: bool,
+
+    /// Latency side
+    #[arg(
+        help_heading = "Latency Options",
+        name = "latency_side",
+        long,
+        default_value_t = StreamSide::Server,
+        help = "Apply latency on the communication between client to proxy or proxy to upstream server.",
+    )]
+    pub side: StreamSide,
+
     /// Direction to apply the latency on
     #[arg(
         help_heading = "Latency Options",
         long,
-        default_value_t = Direction::Both,
+        default_value_t = Direction::Ingress,
         value_enum,
         help = "Fault's direction.",
     )]
@@ -216,11 +238,21 @@ pub struct BandwidthOptions {
     )]
     pub enabled: bool,
 
+    /// Bandwidth side
+    #[arg(
+        help_heading = "Bandwidth Options",
+        name = "bandwidth_side",
+        long,
+        default_value_t = StreamSide::Server,
+        help = "Apply bandwidth on the communication between client to proxy or proxy to upstream server.",
+    )]
+    pub side: StreamSide,
+
     /// Direction to apply the bandwidth limiter on
     #[arg(
         help_heading = "Bandwidth Options",
         long,
-        default_value_t = Direction::Both,
+        default_value_t = Direction::Ingress,
         value_enum,
         help = "Fault's direction.",
     )]
@@ -264,7 +296,7 @@ pub struct JitterOptions {
     #[arg(
         help_heading = "Jitter Options",
         long,
-        default_value_t = Direction::Both,
+        default_value_t = Direction::Ingress,
         value_enum,
         help = "Fault's direction.",
     )]
@@ -328,21 +360,112 @@ pub struct PacketLossOptions {
     )]
     pub enabled: bool,
 
+    /// Packet Loss side
+    #[arg(
+        help_heading = "Bandwidth Options",
+        name = "packet_loss_side",
+        long,
+        default_value_t = StreamSide::Server,
+        help = "Apply packet loss on the communication between client to proxy or proxy to upstream server.",
+    )]
+    pub side: StreamSide,
+
     /// Direction to apply the jitter on
     #[arg(
         help_heading = "Packet Loss Options",
         long,
-        default_value_t = Direction::Both,
+        default_value_t = Direction::Ingress,
         value_enum,
         help = "Fault's direction.",
     )]
     pub packet_loss_direction: Direction,
 }
 
+#[derive(Parser, Debug, Serialize, Deserialize, Clone)]
+pub struct PacketDuplicationOptions {
+    /// Packet Duplication fault enabled
+    #[arg(
+        help_heading = "Packet Duplication Options",
+        action,
+        name = "packet_duplication_enabled",
+        long = "with-packet-duplication",
+        default_value_t = false,
+        help = "Enable packet duplication network fault."
+    )]
+    pub enabled: bool,
+
+    /// Direction to apply the packet duplication on
+    #[arg(
+        help_heading = "Packet Duplication Options",
+        long,
+        default_value_t = Direction::Ingress,
+        value_enum,
+        help = "Fault's direction."
+    )]
+    pub packet_duplication_direction: Direction,
+
+    /// Probability to duplicate each packet (0.0 to 1.0)
+    #[arg(
+        help_heading = "Packet Duplication Options",
+        long,
+        default_value_t = 0.1,
+        help = "Probability to duplicate each packet (0.0 to 1.0).",
+        value_parser = validate_probability
+    )]
+    pub packet_duplication_probability: f64,
+}
+
+#[derive(Parser, Debug, Serialize, Deserialize, Clone)]
+pub struct HTTPResponseOptions {
+    /// HTTP Response Fault enabled
+    #[arg(
+        help_heading = "HTTP Response Options",
+        action,
+        name = "http_response_enabled",
+        long = "with-http-response",
+        default_value_t = false,
+        help = "Enable HTTP response fault."
+    )]
+    pub enabled: bool,
+
+    /// HTTP status code to return (e.g., 500, 503)
+    #[arg(
+        help_heading = "HTTP Response Options",
+        long = "http-status",
+        default_value_t = 500,
+        help = "HTTP status code to return.",
+        value_parser = validate_http_status
+    )]
+    pub http_response_status_code: u16,
+
+    /// Optional response body to return
+    #[arg(
+        help_heading = "HTTP Response Options",
+        long = "http-body",
+        help = "Optional HTTP response body to return.",
+        value_parser
+    )]
+    pub http_response_body: Option<String>,
+
+    /// Probability to trigger the HTTP response fault (0.0 to 1.0)
+    #[arg(
+        help_heading = "HTTP Response Options",
+        long,
+        default_value_t = 1.0, // Default to always trigger when enabled
+        help = "Probability to trigger the HTTP response fault (0.0 to 1.0).",
+        value_parser = validate_probability
+    )]
+    pub http_response_trigger_probability: f64,
+}
+
 #[derive(Args, Clone, Debug, Serialize, Deserialize)]
 pub struct RunCommandOptions {
     #[command(flatten)]
     pub common: ProxyAwareCommandCommon,
+
+    // Http Error Options
+    #[command(flatten)]
+    pub http_error: HTTPResponseOptions,
 
     // Latency Options
     #[command(flatten)]
@@ -363,6 +486,10 @@ pub struct RunCommandOptions {
     // Packet Loss Options
     #[command(flatten)]
     pub packet_loss: PacketLossOptions,
+
+    // Packet Duplication Options
+    #[command(flatten)]
+    pub packet_duplication: PacketDuplicationOptions,
 }
 
 /// Subcommands for executing scenarios
@@ -430,7 +557,7 @@ pub struct RunCommandCommon {
     /// Direction to apply the latency on
     #[arg(
         long,
-        default_value_t = Direction::Both,
+        default_value_t = Direction::Ingress,
         value_enum,
         help = "Fault's direction.",
     )]
@@ -667,5 +794,21 @@ fn validate_positive_usize(val: &str) -> Result<usize, String> {
         Ok(v) if v > 0 => Ok(v),
         Ok(_) => Err(String::from("Value must be a positive integer.")),
         Err(_) => Err(String::from("Invalid unsigned integer.")),
+    }
+}
+
+fn validate_probability(val: &str) -> Result<f64, String> {
+    match val.parse::<f64>() {
+        Ok(f) if f >= 0.0 && f <= 1.0 => Ok(f),
+        _ => {
+            Err(String::from("Probability must be a float between 0.0 and 1.0"))
+        }
+    }
+}
+
+fn validate_http_status(val: &str) -> Result<u16, String> {
+    match val.parse::<u16>() {
+        Ok(code) if code >= 100 && code <= 599 => Ok(code),
+        _ => Err(String::from("HTTP status code must be between 100 and 599")),
     }
 }

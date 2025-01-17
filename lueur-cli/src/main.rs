@@ -263,7 +263,7 @@ async fn main() -> Result<()> {
                                     results.push(ReportItemResult {
                                         target: report.target,
                                         expect: report.expect,
-                                        fault: report.fault,
+                                        faults: report.faults,
                                         metrics,
                                         errors: report.errors,
                                         total_time: report.total_time,

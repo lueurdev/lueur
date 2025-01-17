@@ -62,7 +62,6 @@ pub struct ReportItemFault {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReportItemEvent {
     pub event: FaultEvent,
-    pub direction: Direction,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -121,7 +120,7 @@ pub struct ReportItemTarget {
 pub struct ReportItemResult {
     pub target: ReportItemTarget,
     pub expect: Option<ReportItemExpectation>,
-    pub fault: FaultConfiguration,
+    pub faults: Vec<FaultConfiguration>,
     pub metrics: Option<ReportItemMetrics>, // Metrics collected
     pub errors: Vec<String>,                // Errors encountered
     pub total_time: f64,                    // Total time in milliseconds
@@ -169,7 +168,7 @@ impl Report {
             return Err(ScenarioError::ReportError(err_msg));
         }
 
-        info!("Report successfully saved to '{}'.", path);
+        info!("Scenario results successfully saved to '{}'.", path);
         Ok(())
     }
 }
@@ -188,7 +187,7 @@ pub struct ReportOutput {
 #[derive(Serialize)]
 struct TableRow {
     endpoint: String,
-    total_faults: String,
+    total_faults: Vec<FaultConfiguration>,
     slo_99_200ms: SloResult,
     slo_95_500ms: SloResult,
     slo_90_1s: SloResult,
@@ -313,7 +312,7 @@ pub fn build_report_output(
     for item in &report.items {
         let endpoint = &item.target.address;
         let total_faults = summarize_faults(
-            &item.fault,
+            &item.faults,
             &item.metrics.as_ref().unwrap().faults,
         );
 
@@ -342,7 +341,7 @@ pub fn build_report_output(
         // Map SLO results to respective fields.
         let row = TableRow {
             endpoint: endpoint.clone(),
-            total_faults,
+            total_faults: item.faults.clone(),
             slo_99_200ms: match &slo_results[0].2 {
                 Some(breach) => SloResult {
                     status: slo_results[0].0.clone(),
@@ -528,7 +527,7 @@ fn generate_markdown_report(
             markdown,
             "| `{}` | {} | {} | {} | {} | {} | {} |",
             row.endpoint,
-            row.total_faults,
+            format_faults_markdown(&row.total_faults),
             format_slo_markdown(&row.slo_99_200ms),
             format_slo_markdown(&row.slo_95_500ms),
             format_slo_markdown(&row.slo_90_1s),
@@ -554,6 +553,16 @@ fn generate_markdown_report(
     }
 
     Ok(markdown)
+}
+
+fn format_faults_markdown(faults: &Vec<FaultConfiguration>) -> String {
+    let mut list = String::new();
+
+    for f in faults {
+        list.push_str(format!("- {}", f).as_str());
+    }
+
+    list
 }
 
 /// Formats an SLO result for Markdown output.
@@ -593,7 +602,7 @@ fn generate_text_report(
     for row in &report_output.table {
         table.add_row(row![
             format!("`{}`", row.endpoint),
-            row.total_faults,
+            format_faults_text(&row.total_faults),
             format_slo_text(&row.slo_99_200ms),
             format_slo_text(&row.slo_95_500ms),
             format_slo_text(&row.slo_90_1s),
@@ -619,6 +628,10 @@ fn generate_text_report(
     }
 
     Ok(text)
+}
+
+fn format_faults_text(faults: &Vec<FaultConfiguration>) -> String {
+    format_faults_markdown(faults)
 }
 
 /// Formats an SLO result for Text output.
@@ -696,7 +709,7 @@ fn generate_html_report(
     for row in &report_output.table {
         formatted_table.push(FormattedHtmlTableRow {
             endpoint: row.endpoint.clone(),
-            total_faults: row.total_faults.clone(),
+            total_faults: format_faults_html(&row.total_faults),
             slo_99_200ms: format_slo_html(&row.slo_99_200ms),
             slo_95_500ms: format_slo_html(&row.slo_95_500ms),
             slo_90_1s: format_slo_html(&row.slo_90_1s),
@@ -744,7 +757,13 @@ fn generate_html_report(
             {% for row in formatted_table %}
             <tr>
                 <td><code>{{ row.endpoint }}</code></td>
-                <td>{{ row.total_faults }}</td>
+                <td>
+                    <ul>
+                    {% for fault in formatted_table.total_faults %}
+                        <li>{{ fault }}</li>
+                    {% endfor %}
+                    </ul>
+                </td>
                 <td class="{{ row.slo_99_200ms.class }}">{{ row.slo_99_200ms.formatted }}</td>
                 <td class="{{ row.slo_95_500ms.class }}">{{ row.slo_95_500ms.formatted }}</td>
                 <td class="{{ row.slo_90_1s.class }}">{{ row.slo_90_1s.formatted }}</td>
@@ -790,7 +809,7 @@ fn generate_html_report(
 #[derive(Serialize, Deserialize, Debug)]
 struct FormattedHtmlTableRow {
     endpoint: String,
-    total_faults: String,
+    total_faults: Vec<String>,
     slo_99_200ms: FormattedHtmlSlo,
     slo_95_500ms: FormattedHtmlSlo,
     slo_90_1s: FormattedHtmlSlo,
@@ -803,6 +822,16 @@ struct FormattedHtmlTableRow {
 struct FormattedHtmlSlo {
     class: String,     // e.g., "met" or "breached"
     formatted: String, // e.g., "✅" or "❌ (+50.0ms), 0h 0m 0.1s"
+}
+
+fn format_faults_html(faults: &Vec<FaultConfiguration>) -> Vec<String> {
+    let mut list = Vec::new();
+
+    for f in faults {
+        list.push(format!("{}", f));
+    }
+
+    list
 }
 
 /// Formats an SLO result for HTML output with both class and formatted string.
@@ -826,12 +855,14 @@ fn format_slo_html(slo: &SloResult) -> FormattedHtmlSlo {
 
 /// Summarizes all faults injected into an endpoint into a single string.
 fn summarize_faults(
-    fault: &FaultConfiguration,
+    faults: &Vec<FaultConfiguration>,
     _faults_applied: &[ReportItemMetricsFaults],
-) -> String {
-    let mut summary = String::new();
+) -> Vec<String> {
+    let mut summary = Vec::new();
 
-    summary.push_str(&format!("{}", fault));
+    for fault in faults {
+        summary.push(format!("{}", fault));
+    }
 
     /*
     // Additional faults.
@@ -995,10 +1026,10 @@ fn analyze_fault_types(
     let mut fault_counts = HashMap::new();
 
     for item in &report.items {
-        let primary_fault = item.fault.fault_type();
+        /*let primary_fault = item.faults.fault_type();
         *fault_counts.entry(primary_fault).or_insert(0) += 1;
 
-        /*
+
         for fault_detail in &item.metrics.as_ref().unwrap().faults {
             let additional_fault =
                 fault_detail.computed.as_ref().unwrap().event.event_type();
