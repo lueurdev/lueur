@@ -101,6 +101,7 @@ impl From<&ProxyConfig> for CompositePlugin {
     }
 }
 
+#[tracing::instrument]
 pub fn load_injectors(config: &ProxyConfig) -> Vec<Arc<dyn FaultInjector>> {
     let mut injectors: Vec<Arc<dyn FaultInjector>> = Vec::new();
     let _: Vec<()> = config
@@ -133,6 +134,7 @@ pub fn load_injectors(config: &ProxyConfig) -> Vec<Arc<dyn FaultInjector>> {
 #[async_trait]
 impl ProxyPlugin for CompositePlugin {
     /// Adjust the client builder by sequentially applying each FaultInjector.
+    #[tracing::instrument]
     async fn prepare_client(
         &self,
         builder: ClientBuilder,
@@ -148,6 +150,7 @@ impl ProxyPlugin for CompositePlugin {
     }
 
     /// Process the HTTP request by sequentially applying each FaultInjector.
+    #[tracing::instrument]
     async fn process_request(
         &self,
         req: ReqwestRequest,
@@ -162,6 +165,7 @@ impl ProxyPlugin for CompositePlugin {
     }
 
     /// Process the HTTP response by sequentially applying each FaultInjector.
+    #[tracing::instrument]
     async fn process_response(
         &self,
         resp: http::Response<Vec<u8>>,
@@ -176,6 +180,7 @@ impl ProxyPlugin for CompositePlugin {
     }
 
     /// Inject tunnel faults by sequentially applying each FaultInjector.
+    #[tracing::instrument]
     async fn inject_tunnel_faults(
         &self,
         client_stream: Box<dyn Bidirectional + 'static>,

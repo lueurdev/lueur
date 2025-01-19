@@ -27,6 +27,7 @@ use crate::types::ConnectRequest;
 
 /// Handles CONNECT method requests by establishing a TCP tunnel,
 /// injecting any configured network faults, and applying plugin middleware.
+#[tracing::instrument]
 pub async fn handle_connect(
     req: AxumRequest<Body>,
     app_state: Arc<ProxyState>,

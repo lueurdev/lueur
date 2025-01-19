@@ -54,6 +54,7 @@ pub async fn handle_request(
 }
 
 /// Struct responsible for forwarding requests.
+#[derive(Debug, Clone)]
 pub struct Forward {
     // Shared plugins loaded into the proxy
     state: Arc<ProxyState>,
@@ -70,6 +71,7 @@ impl Forward {
     ///
     /// Applies plugins after request conversion and after receiving the
     /// response.
+    #[tracing::instrument]
     pub async fn execute(
         &self,
         request: AxumRequest<Body>,

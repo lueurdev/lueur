@@ -45,7 +45,11 @@ use event::TaskManager;
 use indicatif::MultiProgress;
 use indicatif::ProgressBar;
 use indicatif::ProgressStyle;
-use logging::init_logging;
+use logging::init_meter_provider;
+use logging::init_subscriber;
+use logging::init_tracer_provider;
+use logging::setup_logging;
+use logging::shutdown_tracer;
 use nic::ProxyEbpfConfig;
 use proxy::ProxyState;
 use proxy::run_proxy;
@@ -78,7 +82,15 @@ use url::Url;
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    let _guards = init_logging(cli.log_file, cli.log_stdout, cli.log_level);
+    let (file_guard, stdout_guard, log_layers) = setup_logging(
+        cli.log_file, cli.log_stdout, cli.log_level
+    ).unwrap();
+
+    let meter_provider = init_meter_provider();
+    let tracer_provider = init_tracer_provider();
+
+    let _ = init_subscriber(log_layers, &tracer_provider, &meter_provider);
+
 
     let (shutdown_tx, shutdown_rx) = broadcast::channel::<()>(1); // Capacity of 1
 
@@ -336,6 +348,8 @@ async fn main() -> Result<()> {
     }
 
     drop(task_manager);
+
+    shutdown_tracer(tracer_provider, meter_provider);
 
     Ok(())
 }

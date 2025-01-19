@@ -102,6 +102,7 @@ impl FaultInjector for JitterInjector {
 }
 
 /// A wrapper around a bidirectional stream that injects jitter.
+#[derive(Debug)]
 #[pin_project]
 pub struct JitterStream {
     #[pin]

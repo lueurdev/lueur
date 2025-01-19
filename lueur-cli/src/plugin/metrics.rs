@@ -127,6 +127,7 @@ impl FaultInjector for MetricsInjector {
     }
 }
 
+#[derive(Debug)]
 #[pin_project]
 pub struct WrapperStream<S> {
     #[pin]

@@ -34,19 +34,24 @@ use crate::types::Direction;
 use crate::types::StreamSide;
 
 use super::Bidirectional;
+use super::BidirectionalReadHalf;
+use super::BidirectionalWriteHalf;
+use super::DelayWrapper;
 use super::FaultInjector;
+use super::FutureDelay;
 
 type Limiter = RateLimiter<NotKeyed, InMemoryState, DefaultClock>;
 
 /// BandwidthLimitedWrite wraps an AsyncWrite stream and limits the write
 /// bandwidth.
+#[derive(Debug)]
 #[pin_project]
 pub struct BandwidthLimitedWrite<S> {
     #[pin]
     inner: S,
     limiter: Option<Arc<Limiter>>,
     #[pin]
-    delay: Option<Pin<Box<dyn std::future::Future<Output = ()> + Send>>>,
+    delay: Option<Pin<Box<dyn FutureDelay>>>,
     event: Option<Box<dyn ProxyTaskEvent>>,
     max_write_size: usize,
     side: StreamSide,
@@ -95,13 +100,14 @@ where
 
 /// BandwidthLimitedRead wraps an AsyncRead stream and limits the read
 /// bandwidth.
+#[derive(Debug)]
 #[pin_project]
 pub struct BandwidthLimitedRead<S> {
     #[pin]
     inner: S,
     limiter: Option<Arc<Limiter>>,
     #[pin]
-    delay: Option<Pin<Box<dyn std::future::Future<Output = ()> + Send>>>,
+    delay: Option<Pin<Box<dyn FutureDelay>>>,
     event: Option<Box<dyn ProxyTaskEvent>>,
     max_read_size: usize,
     side: StreamSide,
@@ -194,9 +200,9 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for BandwidthLimitedWrite<S> {
                     if this.delay.is_none() {
                         let limiter_clone = limiter.clone();
                         let delay_future = async move {
-                            limiter_clone.until_ready().await;
+                            limiter_clone.until_ready().await
                         };
-                        *this.delay = Some(Box::pin(delay_future));
+                        *this.delay = Some(Box::pin(DelayWrapper::new(delay_future)));
                     }
 
                     if let Some(ref mut delay) = *this.delay {
@@ -300,7 +306,7 @@ impl<S: AsyncRead + Unpin> AsyncRead for BandwidthLimitedRead<S> {
                         let delay_future = async move {
                             limiter_clone.until_ready().await;
                         };
-                        *this.delay = Some(Box::pin(delay_future));
+                        *this.delay = Some(Box::pin(DelayWrapper::new(delay_future)));
                     }
 
                     if let Some(ref mut delay) = *this.delay {
@@ -330,6 +336,7 @@ impl<S: AsyncRead + Unpin> AsyncRead for BandwidthLimitedRead<S> {
 }
 
 /// A bidirectional stream that wraps limited reader and writer.
+#[derive(Debug)]
 #[pin_project]
 struct BandwidthLimitedBidirectional<R, W> {
     #[pin]
@@ -340,8 +347,8 @@ struct BandwidthLimitedBidirectional<R, W> {
 
 impl<R, W> BandwidthLimitedBidirectional<R, W>
 where
-    R: AsyncRead + Send + Unpin,
-    W: AsyncWrite + Send + Unpin,
+    R: AsyncRead + Send + Unpin + std::fmt::Debug,
+    W: AsyncWrite + Send + Unpin + std::fmt::Debug,
 {
     fn new(reader: R, writer: W) -> Self {
         Self { reader, writer }
@@ -350,8 +357,8 @@ where
 
 impl<R, W> AsyncRead for BandwidthLimitedBidirectional<R, W>
 where
-    R: AsyncRead + Send + Unpin,
-    W: AsyncWrite + Send + Unpin,
+    R: AsyncRead + Send + Unpin + std::fmt::Debug,
+    W: AsyncWrite + Send + Unpin + std::fmt::Debug,
 {
     fn poll_read(
         self: Pin<&mut Self>,
@@ -423,7 +430,7 @@ impl FaultInjector for BandwidthLimitFaultInjector {
             .with_fault(FaultEvent::Bandwidth { direction: direction.clone(), side: self.settings.side.clone(), bps: None });
 
         // Wrap the read half if ingress or both directions are specified
-        let limited_read: Box<dyn AsyncRead + Unpin + Send> =
+        let limited_read: Box<dyn BidirectionalReadHalf> =
             if direction.is_ingress() {
                 tracing::debug!("Wrapping read half for bandwidth");
                 match BandwidthLimitedRead::new(
@@ -437,11 +444,11 @@ impl FaultInjector for BandwidthLimitFaultInjector {
                     }
                 }
             } else {
-                Box::new(read_half) as Box<dyn AsyncRead + Unpin + Send>
+                Box::new(read_half) as Box<dyn BidirectionalReadHalf>
             };
 
         // Wrap the write half if egress or both directions are specified
-        let limited_write: Box<dyn AsyncWrite + Send + Unpin> =
+        let limited_write: Box<dyn BidirectionalWriteHalf> =
             if direction.is_egress() {
                 tracing::debug!("Wrapping write half for bandwidth");
                 match BandwidthLimitedWrite::new(
@@ -453,7 +460,7 @@ impl FaultInjector for BandwidthLimitFaultInjector {
                     Err(wh) => Box::new(wh),
                 }
             } else {
-                Box::new(write_half) as Box<dyn AsyncWrite + Unpin + Send>
+                Box::new(write_half) as Box<dyn BidirectionalWriteHalf>
             };
 
         // Combine the limited read and write into a new bidirectional stream

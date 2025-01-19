@@ -1,4 +1,5 @@
 use std::env;
+use std::fmt;
 use std::time::Instant;
 
 use axum::Router;
@@ -17,6 +18,7 @@ use serde::Serialize;
 use tokio::signal;
 use tower::ServiceBuilder;
 use tower_http::trace::TraceLayer;
+use axum_tracing_opentelemetry::middleware::{OtelAxumLayer, OtelInResponseLayer};
 
 use crate::cli::DemoConfig;
 use crate::errors::DemoError;
@@ -28,6 +30,8 @@ pub async fn run(config: DemoConfig) -> Result<(), DemoError> {
     router = router.route("/uppercase", post(upper));
     router = router.route("/ping", get(ping_remote));
     router = router.route("/multi", get(multi));
+    router = router.layer(OtelInResponseLayer::default());
+    router = router.layer(OtelAxumLayer::default());
     router = router.layer(
         ServiceBuilder::new()
             .layer(middleware::from_fn(logging_middleware))
@@ -92,9 +96,15 @@ async fn logging_middleware(
 Handlers
 */
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 struct Message {
     content: String,
+}
+
+impl fmt::Display for Message {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.content)
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -103,15 +113,18 @@ struct Pong {
     duration: String,
 }
 
+#[tracing::instrument]
 async fn index() -> Html<&'static str> {
     Html("<h1>Hello, World!</h1>")
 }
 
+#[tracing::instrument]
 async fn upper(Json(message): Json<Message>) -> Json<Message> {
     let upper = message.content.to_uppercase();
     Json(Message { content: upper })
 }
 
+#[tracing::instrument]
 async fn ping_myself() -> Html<&'static str> {
     let builder = make_builder();
     let client = builder.build().unwrap();
@@ -133,6 +146,7 @@ async fn ping_myself() -> Html<&'static str> {
     Html("<h1>Hello, World!</h1>")
 }
 
+#[tracing::instrument]
 async fn ping_remote() -> Json<Pong> {
     let builder = make_builder();
 
@@ -153,6 +167,7 @@ async fn ping_remote() -> Json<Pong> {
     Json(Pong { content: body, duration: duration.as_millis_f64().to_string() })
 }
 
+#[tracing::instrument]
 async fn multi() -> Json<Pong> {
     let builder = make_builder();
 

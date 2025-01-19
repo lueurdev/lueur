@@ -315,6 +315,7 @@ impl ProxyTaskEvent for PassthroughTaskEvent {
     }
 }
 
+#[derive(Debug)]
 pub struct TaskManager {
     counter: AtomicUsize,
     pub sender: TaskProgressSender,

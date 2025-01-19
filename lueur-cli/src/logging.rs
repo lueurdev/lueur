@@ -1,49 +1,154 @@
-use std::path::PathBuf;
-use std::str::FromStr;
+use std::{path::PathBuf, str::FromStr};
 
-use tracing_appender::non_blocking::WorkerGuard;
-use tracing_appender::rolling::never;
+use opentelemetry::{global, trace::TracerProvider as _, KeyValue};
+use opentelemetry_sdk::{
+    metrics::{MeterProviderBuilder, PeriodicReader, SdkMeterProvider},
+    runtime,
+    trace::{RandomIdGenerator, Sampler, Tracer, TracerProvider},
+    Resource,
+};
+use opentelemetry_semantic_conventions::{
+    attribute::{DEPLOYMENT_ENVIRONMENT_NAME, SERVICE_NAME, SERVICE_VERSION},
+    SCHEMA_URL,
+};
+use tracing::{Level, Subscriber};
+use tracing_appender::{non_blocking::WorkerGuard, rolling::never};
 use tracing_log::LogTracer;
-use tracing_subscriber::EnvFilter;
-use tracing_subscriber::Layer;
-use tracing_subscriber::Registry;
-use tracing_subscriber::fmt::format::FmtSpan;
-use tracing_subscriber::layer::SubscriberExt;
+use tracing_opentelemetry::{MetricsLayer, OpenTelemetryLayer};
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer, Registry};
+use axum_tracing_opentelemetry::middleware::{OtelAxumLayer, OtelInResponseLayer};
 
-/// Initializes the logging system to write exclusively to a debug text file
-/// without rotation.
+use crate::plugin::metrics;
+
+// Create a Resource that captures information about the entity for which telemetry is recorded.
+fn resource() -> Resource {
+    Resource::from_schema_url(
+        [
+            KeyValue::new(SERVICE_NAME, env!("CARGO_PKG_NAME")),
+            KeyValue::new(SERVICE_VERSION, env!("CARGO_PKG_VERSION")),
+            KeyValue::new(DEPLOYMENT_ENVIRONMENT_NAME, "dev"),
+        ],
+        SCHEMA_URL,
+    )
+}
+
+// Construct MeterProvider for MetricsLayer
+pub fn init_meter_provider() -> SdkMeterProvider {
+    let exporter = opentelemetry_otlp::MetricExporter::builder()
+        .with_tonic()
+        .with_temporality(opentelemetry_sdk::metrics::Temporality::default())
+        .build()
+        .unwrap();
+
+    let reader = PeriodicReader::builder(exporter, runtime::Tokio)
+        .with_interval(std::time::Duration::from_secs(30))
+        .build();
+
+    // For debugging in development
+    let stdout_reader = PeriodicReader::builder(
+        opentelemetry_stdout::MetricExporter::default(),
+        runtime::Tokio,
+    )
+    .build();
+
+    let meter_provider = MeterProviderBuilder::default()
+        .with_resource(resource())
+        .with_reader(reader)
+        .with_reader(stdout_reader)
+        .build();
+
+    global::set_meter_provider(meter_provider.clone());
+
+    meter_provider
+}
+
+// Construct TracerProvider for OpenTelemetryLayer
+pub fn init_tracer_provider() -> TracerProvider {
+    let exporter = opentelemetry_otlp::SpanExporter::builder()
+        .with_tonic()
+        .build()
+        .unwrap();
+
+    TracerProvider::builder()
+        // Customize sampling strategy
+        .with_sampler(Sampler::ParentBased(Box::new(Sampler::TraceIdRatioBased(
+            1.0,
+        ))))
+        .with_id_generator(RandomIdGenerator::default())
+        .with_resource(resource())
+        .with_batch_exporter(exporter, runtime::Tokio)
+        .build()
+}
+
+pub fn shutdown_tracer(tracer_provider: TracerProvider, meter_provider: SdkMeterProvider) {
+    tracer_provider.force_flush();
+    let _ = meter_provider.force_flush();
+
+    if let Err(err) = tracer_provider.shutdown() {
+        eprintln!("{err:?}");
+    }
+    if let Err(err) = meter_provider.shutdown() {
+        eprintln!("{err:?}");
+    }
+}
+
+
+/// Combines logging and tracing/metrics layers into a single subscriber.
 ///
 /// # Arguments
-///
-/// * `log_directory` - The directory where the log file will be stored.
-/// * `log_file` - The name of the log file.
+/// - `log_layers`: Layers for logging.
+/// - `otel_layer`: Layer for OpenTelemetry tracing.
 ///
 /// # Returns
+/// A combined `tracing_subscriber` ready to be set as the global default.
+pub fn init_subscriber(
+    log_layers: Vec<Box<dyn tracing_subscriber::Layer<Registry> + Send + Sync>>,
+    tracer_provider: &TracerProvider,
+    meter_provider: &SdkMeterProvider
+) -> Result<(), Box<dyn std::error::Error>> {
+    let registry = tracing_subscriber::registry();
+    
+    let mut layers = Vec::new();
+    layers.extend(log_layers);
+
+    let tracer = tracer_provider.tracer("lueur");
+    let telemetry = OpenTelemetryLayer::new(tracer)
+        .with_error_records_to_exceptions(true);
+    let metrics = MetricsLayer::new(meter_provider.clone());
+
+    let subscriber = registry.with(layers).with(telemetry).with(metrics);
+
+    tracing::subscriber::set_global_default(subscriber)?;
+
+    // required so the messages from the ebpf programs get logged properly
+    LogTracer::init()?;
+
+    Ok(())
+}
+
+
+/// Sets up file and stdout logging layers.
 ///
-/// * `Result<WorkerGuard, Box<dyn std::error::Error>>` - Returns a
-///   `WorkerGuard` to ensure logs are flushed.
+/// # Arguments
+/// - `log_file`: Optional path to the log file.
+/// - `enable_stdout`: Whether to log to stdout.
+/// - `log_level`: The desired log level filter (e.g., "debug").
 ///
-/// # Errors
-///
-/// Returns an error if the log directory cannot be created or if setting the
-/// subscriber fails.
-pub fn init_logging(
+/// # Returns
+/// A tuple containing optional guards for file and stdout logging layers.
+pub fn setup_logging(
     log_file: Option<String>,
     enable_stdout: bool,
     log_level: Option<String>,
 ) -> Result<
-    (Option<WorkerGuard>, Option<WorkerGuard>),
+    (Option<WorkerGuard>, Option<WorkerGuard>, Vec<Box<dyn tracing_subscriber::Layer<Registry> + Send + Sync>>),
     Box<dyn std::error::Error>,
 > {
     let mut fileguard: Option<WorkerGuard> = None;
     let mut stdoutguard: Option<WorkerGuard> = None;
-
     let mut layers = Vec::new();
 
-    let log_level = match log_level {
-        Some(log_level) => log_level,
-        None => "debug,tower_http=debug".to_string(),
-    };
+    let log_level = log_level.unwrap_or_else(|| "debug,tower_http=debug,otel::tracing=info".to_string());
 
     if let Some(log_file) = log_file {
         let path = log_file.as_str();
@@ -56,14 +161,9 @@ pub fn init_logging(
 
         fileguard = Some(file_guard);
 
-        let file_filter = match EnvFilter::try_from_default_env() {
-            Ok(filter) => filter,
-            Err(_) => EnvFilter::builder().parse_lossy(log_level.clone()),
-        };
+        let file_filter = EnvFilter::builder().parse_lossy(log_level.clone());
 
-        // Build the subscriber with desired configurations
         let file_layer = tracing_subscriber::fmt::layer()
-            .with_span_events(FmtSpan::ACTIVE)
             .with_file(false)
             .with_line_number(true)
             .with_thread_ids(false)
@@ -79,36 +179,21 @@ pub fn init_logging(
         let (stdout_non_blocking, stdout_guard) =
             tracing_appender::non_blocking(std::io::stdout());
 
-        let stdout_filter = match EnvFilter::try_from_default_env() {
-            Ok(filter) => filter,
-            Err(_) => EnvFilter::builder().parse_lossy(log_level.clone()),
-        };
+        let stdout_filter = EnvFilter::builder().parse_lossy(log_level.clone());
 
         stdoutguard = Some(stdout_guard);
 
-        let stdout_layer: Box<dyn Layer<Registry> + Send + Sync> =
-            tracing_subscriber::fmt::layer()
-                .with_span_events(FmtSpan::NONE)
-                .with_file(false)
-                .with_line_number(true)
-                .with_thread_ids(false)
-                .with_target(true)
-                .with_writer(stdout_non_blocking)
-                .with_filter(stdout_filter)
-                .boxed();
+        let stdout_layer = tracing_subscriber::fmt::layer()
+            .with_file(false)
+            .with_line_number(true)
+            .with_thread_ids(false)
+            .with_target(true)
+            .with_writer(stdout_non_blocking)
+            .with_filter(stdout_filter)
+            .boxed();
 
         layers.push(stdout_layer);
     }
 
-    if !layers.is_empty() {
-        let subscriber = tracing_subscriber::registry().with(layers);
-
-        tracing::subscriber::set_global_default(subscriber)?;
-
-        // required so the messages from the ebpf programs get logged properly
-        LogTracer::init()?;
-    }
-
-    //Ok((file_guard, stdout_guard))
-    Ok((fileguard, stdoutguard))
+    Ok((fileguard, stdoutguard, layers))
 }

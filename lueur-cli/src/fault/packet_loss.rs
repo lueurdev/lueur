@@ -20,8 +20,11 @@ use tokio::io::AsyncWrite;
 use tokio::io::ReadBuf;
 use tokio::io::split;
 use tokio_util::io::ReaderStream;
+use std::fmt::Debug;
 
 use super::Bidirectional;
+use super::BidirectionalReadHalf;
+use super::BidirectionalWriteHalf;
 use super::FaultInjector;
 use crate::config::PacketLossSettings;
 use crate::errors::ProxyError;
@@ -111,6 +114,7 @@ impl MultiState {
 
 /// PacketLossLimitedRead wraps an AsyncRead stream and applies packet loss
 /// based on the Multi-State Markov Model.
+#[derive(Debug)]
 #[pin_project]
 pub struct PacketLossLimitedRead<S> {
     #[pin]
@@ -216,6 +220,7 @@ where
 
 /// PacketLossLimitedWrite wraps an AsyncWrite stream and applies packet loss
 /// based on the Multi-State Markov Model.
+#[derive(Debug)]
 #[pin_project]
 pub struct PacketLossLimitedWrite<S> {
     #[pin]
@@ -336,6 +341,7 @@ where
 
 /// PacketLossLimitedBidirectional wraps limited reader and writer with packet
 /// loss.
+#[derive(Debug)]
 #[pin_project]
 struct PacketLossLimitedBidirectional<R, W> {
     #[pin]
@@ -346,8 +352,8 @@ struct PacketLossLimitedBidirectional<R, W> {
 
 impl<R, W> PacketLossLimitedBidirectional<R, W>
 where
-    R: AsyncRead + Send + Unpin,
-    W: AsyncWrite + Send + Unpin,
+    R: AsyncRead + Send + Unpin + std::fmt::Debug,
+    W: AsyncWrite + Send + Unpin + std::fmt::Debug,
 {
     /// Creates a new PacketLossLimitedBidirectional.
     fn new(reader: R, writer: W) -> Self {
@@ -357,8 +363,8 @@ where
 
 impl<R, W> AsyncRead for PacketLossLimitedBidirectional<R, W>
 where
-    R: AsyncRead + Send + Unpin,
-    W: AsyncWrite + Send + Unpin,
+    R: AsyncRead + Send + Unpin + std::fmt::Debug,
+    W: AsyncWrite + Send + Unpin + std::fmt::Debug,
 {
     fn poll_read(
         self: Pin<&mut Self>,
@@ -431,7 +437,7 @@ impl FaultInjector for PacketLossInjector {
         let _ = event.with_fault(FaultEvent::PacketLoss { direction: direction.clone(), side: side.clone() });
 
         // Wrap the read half if ingress or both directions are specified
-        let limited_read: Box<dyn AsyncRead + Unpin + Send> =
+        let limited_read: Box<dyn BidirectionalReadHalf> =
             if direction.is_ingress() {
                 tracing::debug!("Wrapping read half for packet loss");
                 Box::new(PacketLossLimitedRead::new(
@@ -440,11 +446,11 @@ impl FaultInjector for PacketLossInjector {
                     Some(event.clone())
                 ))
             } else {
-                Box::new(read_half) as Box<dyn AsyncRead + Unpin + Send>
+                Box::new(read_half) as Box<dyn BidirectionalReadHalf>
             };
 
         // Wrap the write half if egress or both directions are specified
-        let limited_write: Box<dyn AsyncWrite + Unpin + Send> =
+        let limited_write: Box<dyn BidirectionalWriteHalf> =
             if direction.is_egress() {
                 tracing::debug!("Wrapping write half for packet loss");
                 Box::new(PacketLossLimitedWrite::new(
@@ -453,7 +459,7 @@ impl FaultInjector for PacketLossInjector {
                     Some(event.clone())
                 ))
             } else {
-                Box::new(write_half) as Box<dyn AsyncWrite + Unpin + Send>
+                Box::new(write_half) as Box<dyn BidirectionalWriteHalf>
             };
 
         // Combine the limited read and write into a new bidirectional stream

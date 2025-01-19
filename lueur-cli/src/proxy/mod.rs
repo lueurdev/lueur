@@ -12,12 +12,18 @@ use hyper::Method;
 use hyper::body::Incoming;
 use hyper::server::conn::http1;
 use hyper_util::rt::TokioIo;
+use opentelemetry::global;
+use opentelemetry::trace::Span;
+use opentelemetry::trace::SpanKind;
+use opentelemetry::trace::Status;
+use opentelemetry::trace::Tracer;
 use tokio::sync::RwLock;
 use tokio::sync::broadcast;
 use tokio::sync::watch;
 use tower::Service;
 use tower::service_fn;
 use url::Url;
+use tracing::span;
 
 use crate::config::ProxyConfig;
 use crate::errors::ProxyError;
@@ -179,7 +185,7 @@ pub async fn run_proxy(
 
                 let resp = match r {
                     Ok(r) => r,
-                    Err(e) => e.into_response(),
+                    Err(e) => e.into_response()
                 };
                 Ok(resp)
             }

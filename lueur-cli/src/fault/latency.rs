@@ -29,6 +29,8 @@ use futures::StreamExt;
 use tokio_util::io::ReaderStream;
 
 use super::Bidirectional;
+use super::BidirectionalReadHalf;
+use super::BidirectionalWriteHalf;
 use super::FaultInjector;
 use crate::config::LatencySettings;
 use crate::errors::ProxyError;
@@ -62,6 +64,7 @@ impl Clone for LatencyInjector {
 }
 
 impl LatencyInjector {
+    #[tracing::instrument]
     fn get_delay(&self, rng: &mut SmallRng) -> Duration {
         let delay = match &self.settings.distribution {
             LatencyDistribution::Normal => {
@@ -151,6 +154,7 @@ impl LatencyInjector {
 }
 
 /// A bidirectional stream that wraps limited reader and writer.
+#[derive(Debug)]
 #[pin_project]
 struct LatencyBidirectional<R, W> {
     #[pin]
@@ -214,6 +218,7 @@ where
 #[async_trait]
 impl FaultInjector for LatencyInjector {
     /// Injects latency into a bidirectional stream.
+    #[tracing::instrument]
     fn inject(
         &self,
         stream: Box<dyn Bidirectional + 'static>,
@@ -231,7 +236,7 @@ impl FaultInjector for LatencyInjector {
             .with_fault(FaultEvent::Latency { direction: direction.clone(), side: self.settings.side.clone(), delay: None });
         
         // Wrap the read half if ingress or both directions are specified
-        let limited_read: Box<dyn AsyncRead + Unpin + Send> =
+        let limited_read: Box<dyn BidirectionalReadHalf> =
             if direction.is_ingress() {
                 tracing::debug!("Wrapping {} read half for latency", self.settings.side);
                 match LatencyStreamRead::new(
@@ -245,11 +250,11 @@ impl FaultInjector for LatencyInjector {
                     }
                 }
             } else {
-                Box::new(read_half) as Box<dyn AsyncRead + Unpin + Send>
+                Box::new(read_half) as Box<dyn BidirectionalReadHalf>
             };
 
         // Wrap the write half if egress or both directions are specified
-        let limited_write: Box<dyn AsyncWrite + Send + Unpin> =
+        let limited_write: Box<dyn BidirectionalWriteHalf> =
             if direction.is_egress() {
                 tracing::debug!("Wrapping {} write half for latency", self.settings.side);
                 match LatencyStreamWrite::new(
@@ -261,7 +266,7 @@ impl FaultInjector for LatencyInjector {
                     Err(wh) => Box::new(wh),
                 }
             } else {
-                Box::new(write_half) as Box<dyn AsyncWrite + Unpin + Send>
+                Box::new(write_half) as Box<dyn BidirectionalWriteHalf>
             };
 
         // Combine the limited read and write into a new bidirectional stream
@@ -271,6 +276,7 @@ impl FaultInjector for LatencyInjector {
         Box::new(limited_bidirectional)
     }
 
+    #[tracing::instrument]
     async fn apply_on_response(
         &self,
         resp: http::Response<Vec<u8>>,
@@ -315,6 +321,7 @@ impl FaultInjector for LatencyInjector {
         Ok(resp)
     }
 
+    #[tracing::instrument]
     async fn apply_on_request_builder(
         &self,
         builder: reqwest::ClientBuilder,
@@ -323,6 +330,7 @@ impl FaultInjector for LatencyInjector {
         Ok(builder)
     }
 
+    #[tracing::instrument]
     async fn apply_on_request(
         &self,
         request: reqwest::Request,
@@ -367,6 +375,7 @@ impl FaultInjector for LatencyInjector {
     }
 }
 
+#[derive(Debug)]
 #[pin_project]
 pub struct LatencyStreamRead<S> {
     #[pin]
@@ -383,7 +392,7 @@ pub struct LatencyStreamRead<S> {
 
 impl<S> LatencyStreamRead<S>
 where
-S: AsyncRead + Unpin,
+S: AsyncRead + Unpin + std::fmt::Debug,
 {
     /// Creates a new LatencyStreamRead with the specified bandwidth
     /// options.
@@ -413,7 +422,8 @@ S: AsyncRead + Unpin,
     }
 }
 
-impl<S: AsyncRead + Unpin> AsyncRead for LatencyStreamRead<S> {
+impl<S: AsyncRead + Unpin + std::fmt::Debug> AsyncRead for LatencyStreamRead<S> {
+    #[tracing::instrument]
     fn poll_read(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -458,6 +468,7 @@ impl<S: AsyncRead + Unpin> AsyncRead for LatencyStreamRead<S> {
     }
 }
 
+#[derive(Debug)]
 #[pin_project]
 pub struct LatencyStreamWrite<S> {
     #[pin]
@@ -504,7 +515,8 @@ where
     }
 }
 
-impl<S: AsyncWrite + Unpin> AsyncWrite for LatencyStreamWrite<S> {
+impl<S: AsyncWrite + Unpin + std::fmt::Debug> AsyncWrite for LatencyStreamWrite<S> {
+    #[tracing::instrument]
     fn poll_write(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -549,6 +561,7 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for LatencyStreamWrite<S> {
         Pin::new(&mut this.stream).poll_write(cx, buf)
     }
 
+    #[tracing::instrument]
     fn poll_flush(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -557,6 +570,7 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for LatencyStreamWrite<S> {
         Pin::new(&mut this.stream).poll_flush(cx)
     }
 
+    #[tracing::instrument]
     fn poll_shutdown(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
