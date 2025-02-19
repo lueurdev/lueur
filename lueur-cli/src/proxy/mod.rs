@@ -74,6 +74,109 @@ impl ProxyState {
     }
 }
 
+#[tracing::instrument]
+async fn handle_new_connection(
+    req: Request<Body>,
+    state: Arc<ProxyState>,
+    task_manager: Arc<TaskManager>,
+) -> Result<hyper::Response<Body>, ProxyError> {
+    let req = req.map(Body::new);
+
+    let state = state.clone();
+    let method = req.method().clone();
+    let scheme = req.uri().scheme_str().unwrap_or("http").to_string();
+    let authority: Option<String> =
+        req.uri().authority().map(|a| a.as_str().to_string());
+    let host_header = req
+        .headers()
+        .get(axum::http::header::HOST)
+        .and_then(|v| v.to_str().ok().map(|s| s.to_string()));
+
+    let path = match req.uri().path_and_query() {
+        Some(path) => path.to_string(),
+        None => "/".to_string(),
+    };
+
+    let upstream = match determine_upstream(
+        scheme,
+        authority,
+        host_header,
+        path,
+        state.stealth,
+    )
+    .await
+    {
+        Ok(url) => url,
+        Err(e) => {
+            tracing::error!("Failed to determine upstream: {}", e);
+            return Err(e);
+        }
+    };
+
+    let mut passthrough = true;
+
+    let hosts = state.upstream_hosts.read().await;
+    let upstream_host = get_host(&upstream);
+    if hosts.contains(&upstream_host) {
+        tracing::debug!("Upstream host in allowed list");
+        passthrough = false;
+    } else {
+        tracing::debug!("Upstream host will be passthrough");
+    }
+
+    let upstream_url: Url = upstream.parse().unwrap();
+    let mut event = task_manager
+        .new_passthrough_event(upstream_url.to_string())
+        .await
+        .unwrap();
+
+    if !passthrough {
+        event = task_manager
+            .new_fault_event(upstream_url.to_string())
+            .await
+            .unwrap();
+    }
+
+    tracing::debug!("Upstream {}", upstream_url);
+
+    if method == Method::CONNECT {
+        tracing::debug!("Processing tunnel request to {}", upstream_url);
+        let r = tunnel::handle_connect(
+            req,
+            state.clone(),
+            upstream_url,
+            passthrough,
+            event.clone(),
+        )
+        .await;
+
+        let resp = match r {
+            Ok(r) => r,
+            Err(e) => e.into_response(),
+        };
+        Ok(resp)
+    } else {
+        tracing::debug!(
+            "Processing forward request to {}",
+            upstream_url
+        );
+        let r = forward::handle_request(
+            req,
+            state.clone(),
+            upstream_url,
+            passthrough,
+            event.clone(),
+        )
+        .await;
+
+        let resp = match r {
+            Ok(r) => r,
+            Err(e) => e.into_response()
+        };
+        Ok(resp)
+    }
+}
+
 pub async fn run_proxy(
     proxy_address: String,
     state: Arc<ProxyState>,
@@ -91,105 +194,7 @@ pub async fn run_proxy(
 
     let state_cloned = state.clone();
     let tower_service = service_fn(move |req: Request<Incoming>| {
-        let state = state.clone();
-        let req = req.map(Body::new);
-        let task_manager = task_manager.clone();
-
-        async move {
-            let state = state.clone();
-            let method = req.method().clone();
-            let scheme = req.uri().scheme_str().unwrap_or("http").to_string();
-            let authority: Option<String> =
-                req.uri().authority().map(|a| a.as_str().to_string());
-            let host_header = req
-                .headers()
-                .get(axum::http::header::HOST)
-                .and_then(|v| v.to_str().ok().map(|s| s.to_string()));
-
-            let path = match req.uri().path_and_query() {
-                Some(path) => path.to_string(),
-                None => "/".to_string(),
-            };
-
-            let upstream = match determine_upstream(
-                scheme,
-                authority,
-                host_header,
-                path,
-                state.stealth,
-            )
-            .await
-            {
-                Ok(url) => url,
-                Err(e) => {
-                    tracing::error!("Failed to determine upstream: {}", e);
-                    return Err(e);
-                }
-            };
-
-            let mut passthrough = true;
-
-            let hosts = state.upstream_hosts.read().await;
-            let upstream_host = get_host(&upstream);
-            if hosts.contains(&upstream_host) {
-                tracing::debug!("Upstream host in allowed list");
-                passthrough = false;
-            } else {
-                tracing::debug!("Upstream host will be passthrough");
-            }
-
-            let upstream_url: Url = upstream.parse().unwrap();
-            let mut event = task_manager
-                .new_passthrough_event(upstream_url.to_string())
-                .await
-                .unwrap();
-
-            if !passthrough {
-                event = task_manager
-                    .new_fault_event(upstream_url.to_string())
-                    .await
-                    .unwrap();
-            }
-
-            tracing::debug!("Upstream {}", upstream_url);
-
-            if method == Method::CONNECT {
-                tracing::debug!("Processing tunnel request to {}", upstream_url);
-                let r = tunnel::handle_connect(
-                    req,
-                    state.clone(),
-                    upstream_url,
-                    passthrough,
-                    event.clone(),
-                )
-                .await;
-
-                let resp = match r {
-                    Ok(r) => r,
-                    Err(e) => e.into_response(),
-                };
-                Ok(resp)
-            } else {
-                tracing::debug!(
-                    "Processing forward request to {}",
-                    upstream_url
-                );
-                let r = forward::handle_request(
-                    req,
-                    state.clone(),
-                    upstream_url,
-                    passthrough,
-                    event.clone(),
-                )
-                .await;
-
-                let resp = match r {
-                    Ok(r) => r,
-                    Err(e) => e.into_response()
-                };
-                Ok(resp)
-            }
-        }
+        handle_new_connection(req.map(Body::new), state.clone(), task_manager.clone())
     });
 
     let hyper_service =
